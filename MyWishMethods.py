@@ -168,10 +168,11 @@ def construct(wallet, arguments):
 #        pdb.set_trace()
         ms = StreamManager.GetStream()
         writer = BinaryWriter(ms)
-        tx.SerializeUnsigned(writer)
+        tx.Serialize(writer)
         ms.flush()
-        binary_tx = ms.ToArray()
-        return {'context': context.ToJson(), 'tx': binascii.hexlify(binary_tx).decode()}
+        tx = ms.ToArray()
+        print(tx)
+        return {'context': context.ToJson(), 'tx': tx.decode()}
 
 '''
 def parse_and_sign(prompter, wallet, jsn):
