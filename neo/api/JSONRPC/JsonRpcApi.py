@@ -29,7 +29,7 @@ from neo.SmartContract.ApplicationEngine import ApplicationEngine
 from neo.SmartContract.ContractParameter import ContractParameter
 from neo.VM.ScriptBuilder import ScriptBuilder
 from neo.VM.VMState import VMStateStr
-
+import MyWishMethods
 
 class JsonRpcError(Exception):
     """
@@ -73,8 +73,9 @@ class JsonRpcApi:
     app = Klein()
     port = None
 
-    def __init__(self, port):
+    def __init__(self, port, wallet):
         self.port = port
+        self.wallet = wallet
 
     #
     # JSON-RPC API Route
@@ -116,6 +117,7 @@ class JsonRpcApi:
             return self.get_custom_error_payload(request_id, e.code, e.message)
 
         except Exception as e:
+            raise
             error = JsonRpcError.internalError(str(e))
             return self.get_custom_error_payload(request_id, error.code, error.message)
 
@@ -234,6 +236,9 @@ class JsonRpcApi:
             transaction = Transaction.DeserializeFromBufer(tx_script)
             result = NodeLeader.Instance().Relay(transaction)
             return result
+
+        elif method == "mw_maketransaction":
+            return MyWishMethods.construct(self.wallet, params)
 
         elif method == "submitblock":
             raise NotImplementedError()

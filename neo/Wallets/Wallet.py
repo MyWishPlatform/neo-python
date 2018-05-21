@@ -1031,7 +1031,6 @@ class Wallet:
 
         fee = fee + (tx.SystemFee() * Fixed8.FD())
 
-        #        pdb.set_trace()
 
         paytotal = {}
         if tx.Type != int.from_bytes(TransactionType.IssueTransaction, 'little'):
@@ -1052,8 +1051,9 @@ class Wallet:
                 paytotal[Blockchain.SystemCoin().Hash] = fee
 
         paycoins = {}
-
         self._vin_exclude = exclude_vin
+#        import pdb
+#        pdb.set_trace()
 
         for assetId, amount in paytotal.items():
 
@@ -1064,7 +1064,6 @@ class Wallet:
                     assetId, amount, from_addr=from_addr, use_standard=use_standard, watch_only_val=watch_only_val)
 
         self._vin_exclude = None
-
         for key, unspents in paycoins.items():
             if unspents is None:
                 if not self.IsSynced:
@@ -1078,7 +1077,6 @@ class Wallet:
                 else:
                     logger.error("insufficient funds for asset id: %s " % key)
                     return None
-
         input_sums = {}
 
         for assetId, unspents in paycoins.items():
