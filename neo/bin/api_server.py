@@ -56,7 +56,7 @@ from neo.api.REST.RestApi import RestApi
 
 from neo.Network.NodeLeader import NodeLeader
 from neo.Settings import settings
-
+from MyWishMethods import OnlyPublicWallet
 
 # Logfile default settings (only used if --logfile arg is used)
 LOGFILE_MAX_BYTES = 5e7  # 50 MB
@@ -204,9 +204,14 @@ def main():
     d.setDaemon(True)  # daemonizing the thread will kill it when the main thread is quit
     d.start()
 
+    wallet = OnlyPublicWallet()
+    walletdb_loop = task.LoopingCall(wallet.ProcessBlocks)
+    walletdb_loop.start(.1)
+
+
     if args.port_rpc:
         logger.info("Starting json-rpc api server on http://%s:%s" % (args.host, args.port_rpc))
-        api_server_rpc = JsonRpcApi(args.port_rpc)
+        api_server_rpc = JsonRpcApi(args.port_rpc, wallet)
 #        endpoint_rpc = "tcp:port={0}:interface={1}".format(args.port_rpc, args.host)
 #        endpoints.serverFromString(reactor, endpoint_rpc).listen(Site(api_server_rpc.app.resource()))
 #        reactor.listenTCP(int(args.port_rpc), server.Site(api_server_rpc))
@@ -226,7 +231,7 @@ def main():
     NotificationDB.close()
     Blockchain.Default().Dispose()
     NodeLeader.Instance().Shutdown()
-
+    wallet.Close()
 
 if __name__ == "__main__":
     main()

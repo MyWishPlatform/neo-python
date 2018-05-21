@@ -296,3 +296,4 @@ class ContractParametersContext:
 
         except Exception as e:
             logger.error("Failed to import ContractParametersContext from JSON: {}".format(e))
+            raise

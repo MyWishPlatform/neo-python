@@ -714,11 +714,12 @@ class Transaction(InventoryMixin):
         for key, group in groupby(self.outputs, lambda p: p.AssetId):
             asset = GetBlockchain().GetAssetState(key.ToBytes())
             if asset is None:
-                raise Exception("Invalid operation")
-
-            if asset.AssetType == AssetType.DutyFlag:
-                for p in group:
-                    hashes.add(p.ScriptHash)
+#raise Exception("Invalid operation")
+                continue
+            else:
+                if asset.AssetType == AssetType.DutyFlag:
+                    for p in group:
+                        hashes.add(p.ScriptHash)
 
         hashlist = list(hashes)
         hashlist.sort()

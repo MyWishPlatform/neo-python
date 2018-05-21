@@ -39,7 +39,6 @@ class UserWallet(Wallet):
     _db = None
 
     def __init__(self, path, passwordKey, create):
-
         super(UserWallet, self).__init__(path, passwordKey=passwordKey, create=create)
         logger.debug("initialized user wallet %s " % self)
         self.LoadNamedAddresses()
@@ -371,6 +370,7 @@ class UserWallet(Wallet):
         for tx in block.FullTransactions:
 
             if self.IsWalletTransaction(tx):
+                logger.info('*'*60 + 'wallet tx')
                 db_tx = None
                 try:
                     db_tx = Transaction.get(Hash=tx.Hash.ToBytes())
@@ -400,7 +400,6 @@ class UserWallet(Wallet):
         self.OnCoinsChanged(added, changed, deleted)
 
     def OnCoinsChanged(self, added, changed, deleted):
-
         for coin in added:
             addr_hash = bytes(coin.Output.ScriptHash.Data)
 
@@ -420,6 +419,7 @@ class UserWallet(Wallet):
                 logger.debug("saved coin %s " % c)
             except Exception as e:
                 logger.error("COULDN'T SAVE!!!! %s " % e)
+                raise
 
         for coin in changed:
             for hold in self._holds:
@@ -432,6 +432,7 @@ class UserWallet(Wallet):
                 c.save()
             except Exception as e:
                 logger.error("Coulndn't change coin %s %s (coin to change not found)" % (coin, e))
+                raise
 
         for coin in deleted:
             for hold in self._holds:
@@ -444,6 +445,7 @@ class UserWallet(Wallet):
 
             except Exception as e:
                 logger.error("could not delete coin %s %s " % (coin, e))
+                raise
 
     @property
     def Addresses(self):

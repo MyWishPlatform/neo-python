@@ -69,6 +69,7 @@ def construct_and_send(prompter, wallet, arguments, prompt_password=True):
                                      fee=fee,
                                      from_addr=scripthash_from)
 
+
         if ttx is None:
             print("insufficient funds")
             return False
@@ -98,6 +99,14 @@ def construct_and_send(prompter, wallet, arguments, prompt_password=True):
 
         context = ContractParametersContext(tx, isMultiSig=signer_contract.IsMultiSigContract)
         wallet.Sign(context)
+
+        print(context.ScriptHashes)
+        for s in context.GetScripts():
+            print(s.ToJson())
+        print(tx.ToJson())
+
+
+        raise
 
         if context.Completed:
 
