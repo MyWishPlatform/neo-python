@@ -1,4 +1,5 @@
 from neo.Core.Blockchain import Blockchain
+from neo.VM.ScriptBuilder import ScriptBuilder
 from neo.SmartContract.ApplicationEngine import ApplicationEngine
 from neo.SmartContract import TriggerType
 from neo.SmartContract.StateMachine import StateMachine
@@ -15,6 +16,7 @@ from neo.Implementations.Blockchains.LevelDB.DBCollection import DBCollection
 from neo.Core.TX.Transaction import TransactionOutput, ContractTransaction
 from neo.Core.TX.TransactionAttribute import TransactionAttribute, TransactionAttributeUsage
 from neo.SmartContract.ContractParameterContext import ContractParametersContext
+from neo.SmartContract.ContractParameter import ContractParameter
 from neo.Network.NodeLeader import NodeLeader
 from neo.Prompt.Utils import get_arg, get_from_addr, get_asset_id, lookup_addr_str, get_tx_attr_from_args
 from neo.Prompt.Commands.Tokens import do_token_transfer, amount_from_string
@@ -202,6 +204,7 @@ class JsonRpcError(Exception):
 
 
 def construct_deploy_tx(wallet, params):
+    params = params[0]
     from_addr = params['from_addr']
     # load_smart_contract
     contract_params = bytearray(binascii.unhexlify(params['contract_params']))
@@ -316,5 +319,109 @@ def construct_deploy_tx(wallet, params):
 
 
 
-    return {1: 1}
+def construct_invoke_tx(wallet, params):
+    params = params[0]
+    from_addr = params['from_addr']
+    
+    BC = GetBlockchain()
 
+    contract = BC.GetContract(params['addr'])
+
+    if not contract:
+        raise Exception('no such contract')
+
+    neo_to_attach = params.get('neo_to_attach', 0)
+    gas_to_attach = params.get('gas_to_attach', 0)
+
+    sb = ScriptBuilder()
+    contract_parameters = [ContractParameter.FromJson(p) for p in params['contract_params']]
+    sb.EmitAppCallWithJsonArgs(contract.Code.ScriptHash(), contract_parameters)
+    
+    invoke_script = sb.ToArray()
+
+    outputs = []
+
+    if neo_to_attach:
+
+        output = TransactionOutput(AssetId=Blockchain.SystemShare().Hash,
+                Value=neo_to_attach,
+                script_hash=contract.Code.ScriptHash(),
+        )
+        outputs.append(output)
+
+    if gas_to_attach:
+
+        output = TransactionOutput(AssetId=Blockchain.SystemCoin().Hash,
+                Value=gas_to_attach,
+                script_hash=contract.Code.ScriptHash(),
+        )
+
+        outputs.append(output)
+
+    bc = GetBlockchain()
+    sn = bc._db.snapshot()
+    accounts = DBCollection(bc._db, sn, DBPrefix.ST_Account, AccountState)
+    assets = DBCollection(bc._db, sn, DBPrefix.ST_Asset, AssetState)
+    validators = DBCollection(bc._db, sn, DBPrefix.ST_Validator, ValidatorState)
+    contracts = DBCollection(bc._db, sn, DBPrefix.ST_Contract, ContractState)
+    storages = DBCollection(bc._db, sn, DBPrefix.ST_Storage, StorageItem)
+
+
+    tx = InvocationTransaction()
+    tx.outputs = outputs
+    tx.inputs = []
+    tx.Version = 1
+    tx.scripts = []
+    tx.Script = binascii.unhexlify(invoke_script)
+
+    script_table = CachedScriptTable(contracts)
+    service = StateMachine(accounts, validators, assets, contracts, storages, None)
+    contract = wallet.GetDefaultContract()
+    tx.Attributes = [TransactionAttribute(usage=TransactionAttributeUsage.Script, data=Crypto.ToScriptHash(contract.Script, unhex=False).Data)]
+    tx = wallet.MakeTransaction(tx=tx)
+
+    engine = ApplicationEngine(
+            trigger_type=TriggerType.Application,
+            container=tx,
+            table=script_table,
+            service=service,
+            gas=tx.Gas,
+            testMode=True
+    )   
+    engine.LoadScript(tx.Script, False)
+    success = engine.Execute()
+    if not success:
+        raise Exception('exec failed')
+    
+    service.ExecutionCompleted(engine, success)
+
+    consumed = engine.GasConsumed() - Fixed8.FromDecimal(10)
+    consumed = consumed.Ceil()
+
+    net_fee = None
+    tx_gas = None
+
+    if consumed <= Fixed8.Zero():
+        net_fee = Fixed8.FromDecimal(.0001)
+        tx_gas = Fixed8.Zero()
+    else:
+        tx_gas = consumed
+        net_fee = Fixed8.Zero()
+    tx.Gas = tx_gas
+    tx.outputs = outputs
+    tx.Attributes = []
+
+    # InvokeContract
+    from_addr = lookup_addr_str(wallet, from_addr)
+    tx = wallet.MakeTransaction(tx=tx, fee=Fixed8.Zero(), use_standard=True, from_addr=from_addr)
+    if tx is None:
+        raise Exception("no gas")
+
+
+    context = ContractParametersContext(tx)
+    ms = StreamManager.GetStream()
+    writer = BinaryWriter(ms)
+    tx.Serialize(writer)
+    ms.flush()
+    binary_tx = ms.ToArray()
+    return {'context': context.ToJson(), 'tx': binary_tx.decode()}

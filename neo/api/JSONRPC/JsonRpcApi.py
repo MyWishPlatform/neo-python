@@ -242,6 +242,9 @@ class JsonRpcApi:
         elif method == "mw_construct_deploy_tx":
             return MyWishMethods.construct_deploy_tx(self.wallet, params)
 
+        elif method == "mw_construct_invoke_tx":
+            return MyWishMethods.construct_invoke_tx(self.wallet, params)
+
         elif method == "submitblock":
             raise NotImplementedError()
 

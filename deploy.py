@@ -11,13 +11,13 @@ def deploy(from_addr, bytecode, contract_params, return_type, details):
             'jsonrpc': '2.0',
             'id': 1,
             'method': 'mw_construct_deploy_tx',
-            'params': {
+            'params': [{
                 'from_addr': from_addr,
                 'bin': bytecode,
                 'contract_params': contract_params,
                 'return_type': return_type,
                 'details': details,
-    }}).json()
+    }]}).json()
     if 'error' in response:
         print(response['error']['message'])
         return
@@ -42,7 +42,6 @@ def deploy(from_addr, bytecode, contract_params, return_type, details):
 
 
 
-    return
 
 
     response = requests.post('http://127.0.0.1:20332', json={
