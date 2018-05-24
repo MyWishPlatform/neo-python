@@ -57,6 +57,7 @@ from neo.api.REST.RestApi import RestApi
 from neo.Network.NodeLeader import NodeLeader
 from neo.Settings import settings
 from MyWishMethods import OnlyPublicWallet
+from settings_local import PUBLIC_KEY_TESTNET, PUBLIC_KEY_MAINNET
 
 # Logfile default settings (only used if --logfile arg is used)
 LOGFILE_MAX_BYTES = 5e7  # 50 MB
@@ -142,8 +143,10 @@ def main():
         settings.setup(args.config)
     elif args.mainnet:
         settings.setup_mainnet()
+        public_key = PUBLIC_KEY_MAINNET
     elif args.testnet:
         settings.setup_testnet()
+        public_key = PUBLIC_KEY_TESTNET
     elif args.privnet:
         settings.setup_privnet()
     elif args.coznet:
@@ -204,7 +207,7 @@ def main():
     d.setDaemon(True)  # daemonizing the thread will kill it when the main thread is quit
     d.start()
 
-    wallet = OnlyPublicWallet()
+    wallet = OnlyPublicWallet(public_key)
     walletdb_loop = task.LoopingCall(wallet.ProcessBlocks)
     walletdb_loop.start(.1)
 

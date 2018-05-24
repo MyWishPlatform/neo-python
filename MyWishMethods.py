@@ -54,7 +54,7 @@ class OnlyPublicKeyPair(KeyPair):
 
 
 class OnlyPublicWallet(UserWallet):
-    def __init__(self):
+    def __init__(self, public):
         self._path = 'test123'
         self.AddressVersion = 23
         self._lock = RLock()
@@ -64,22 +64,22 @@ class OnlyPublicWallet(UserWallet):
 
         self._keys = {}
         self._contracts = self.LoadContracts()
-        for public in ['0294cd0a9e77f358f709e69d9375680b1eafe75373645192b5b251260f484577ea']:
-            kp = OnlyPublicKeyPair(public)
-            self._keys[kp.PublicKeyHash.ToBytes()] = kp
-            contract = WalletContract.CreateSignatureContract(kp.PublicKey)
-            if contract.ScriptHash.ToBytes() not in self._contracts.keys():
-                self._contracts[contract.ScriptHash.ToBytes()] = contract
-                sh = bytes(contract.ScriptHash.ToArray())
-                address, created = Address.get_or_create(ScriptHash=sh)
-                address.IsWatchOnly = False
-                address.save()
-                db_contract = Contract.create(RawData=contract.ToArray(),
-                        ScriptHash=contract.ScriptHash.ToBytes(),
-                        PublicKeyHash=contract.PublicKeyHash.ToBytes(),
-                        Address=address,
-                        Account=None
-                )
+#        for public in ['0294cd0a9e77f358f709e69d9375680b1eafe75373645192b5b251260f484577ea']:
+        kp = OnlyPublicKeyPair(public)
+        self._keys[kp.PublicKeyHash.ToBytes()] = kp
+        contract = WalletContract.CreateSignatureContract(kp.PublicKey)
+        if contract.ScriptHash.ToBytes() not in self._contracts.keys():
+            self._contracts[contract.ScriptHash.ToBytes()] = contract
+            sh = bytes(contract.ScriptHash.ToArray())
+            address, created = Address.get_or_create(ScriptHash=sh)
+            address.IsWatchOnly = False
+            address.save()
+            db_contract = Contract.create(RawData=contract.ToArray(),
+                    ScriptHash=contract.ScriptHash.ToBytes(),
+                    PublicKeyHash=contract.PublicKeyHash.ToBytes(),
+                    Address=address,
+                    Account=None
+            )
 
 
 
@@ -208,7 +208,7 @@ def construct_deploy_tx(wallet, params):
     return_type = bytearray(binascii.unhexlify(params['return_type']))
     
     contract_properties = 0
-    if params.get('needs_storage', False):
+    if params.get('needs_storage', True):
         contract_properties += ContractPropertyState.HasStorage
     if params.get('needs_dynamic_invoke', False):
         contract_properties += ContractPropertyState.HasDynamicInvoke
