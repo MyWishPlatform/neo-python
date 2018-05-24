@@ -1,10 +1,24 @@
 from neo.Core.Blockchain import Blockchain
+from neo.SmartContract.ApplicationEngine import ApplicationEngine
+from neo.SmartContract import TriggerType
+from neo.SmartContract.StateMachine import StateMachine
+from neo.Implementations.Blockchains.LevelDB.CachedScriptTable import CachedScriptTable
+from neo.Core.TX.InvocationTransaction import InvocationTransaction
+from neo.Core.State.AccountState import AccountState
+from neo.Core.State.AssetState import AssetState
+from neo.Core.State.ValidatorState import ValidatorState
+from neo.Core.State.ContractState import ContractState
+from neo.Core.State.StorageItem import StorageItem
+from neo.Implementations.Blockchains.LevelDB.DBPrefix import DBPrefix
+from neo.Blockchain import GetBlockchain
+from neo.Implementations.Blockchains.LevelDB.DBCollection import DBCollection
 from neo.Core.TX.Transaction import TransactionOutput, ContractTransaction
 from neo.Core.TX.TransactionAttribute import TransactionAttribute, TransactionAttributeUsage
 from neo.SmartContract.ContractParameterContext import ContractParametersContext
 from neo.Network.NodeLeader import NodeLeader
 from neo.Prompt.Utils import get_arg, get_from_addr, get_asset_id, lookup_addr_str, get_tx_attr_from_args
 from neo.Prompt.Commands.Tokens import do_token_transfer, amount_from_string
+from neo.Prompt.Commands.LoadSmartContract import generate_deploy_script
 from neo.Wallets.NEP5Token import NEP5Token
 from neocore.UInt256 import UInt256
 from neocore.Fixed8 import Fixed8
@@ -24,7 +38,10 @@ from neo.SmartContract.Contract import Contract as WalletContract
 from neo.Implementations.Wallets.peewee.Models import Account, Address, Contract
 from neocore.IO.BinaryWriter import BinaryWriter
 from neo.IO.MemoryStream import StreamManager
-
+from neo.Prompt.Utils import parse_param
+from neo.Core.FunctionCode import FunctionCode
+from neo.Core.State.ContractState import ContractPropertyState
+from neo.Prompt.Commands.Invoke import InvokeContract, TestInvokeContract, test_invoke
 
 class OnlyPublicKeyPair(KeyPair):
     def __init__(self, public_key):
@@ -96,8 +113,7 @@ class OnlyPublicWallet(UserWallet):
     def ChangePassword(self, *args):
         raise NotImplementedError
 
-
-def construct(wallet, arguments):
+def construct_send_tx(wallet, arguments):
         from_address = arguments['from']
         to_send = arguments['asset']
         address_to = arguments['to']
@@ -170,46 +186,135 @@ def construct(wallet, arguments):
         writer = BinaryWriter(ms)
         tx.Serialize(writer)
         ms.flush()
-        tx = ms.ToArray()
+        binary_tx = ms.ToArray()
         print(tx)
-        return {'context': context.ToJson(), 'tx': tx.decode()}
+        return {'context': context.ToJson(), 'tx': binary_tx.decode()}
 
-'''
-def parse_and_sign(prompter, wallet, jsn):
+class JsonRpcError(Exception):
+    message = None
+    code = None
 
-    try:
-        context = ContractParametersContext.FromJson(jsn)
-        if context is None:
-            print("Failed to parse JSON")
-            return
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+        self.message = message
 
-        wallet.Sign(context)
 
-        if context.Completed:
 
-            print("Signature complete, relaying...")
+def construct_deploy_tx(wallet, params):
+    from_addr = params['from_addr']
+    # load_smart_contract
+    contract_params = bytearray(binascii.unhexlify(params['contract_params']))
+    return_type = bytearray(binascii.unhexlify(params['return_type']))
+    
+    contract_properties = 0
+    if params.get('needs_storage', False):
+        contract_properties += ContractPropertyState.HasStorage
+    if params.get('needs_dynamic_invoke', False):
+        contract_properties += ContractPropertyState.HasDynamicInvoke
 
-            tx = context.Verifiable
-            tx.scripts = context.GetScripts()
+    script = binascii.unhexlify(params['bin'])
 
-            wallet.SaveTransaction(tx)
+    function_code = FunctionCode(
+            script = script,
+            param_list = contract_params,
+            return_type = return_type,
+            contract_properties = contract_properties,
+    )
 
-            print("will send tx: %s " % json.dumps(tx.ToJson(), indent=4))
+    if Blockchain.Default().GetContract(function_code.ScriptHash().To0xString()):
+        raise Exception('contract already exists')
 
-            relayed = NodeLeader.Instance().Relay(tx)
+    # GatherContractDetails
+    details = params['details']
+    name = details['name']
+    version = details['version']
+    author = details['author']
+    email = details['email']
+    description = details['description']
 
-            if relayed:
-                print("Relayed Tx: %s " % tx.Hash.ToString())
-            else:
-                print("Could not relay tx %s " % tx.Hash.ToString())
-            return
-        else:
-            print("Transaction initiated, but the signature is incomplete")
-            print(json.dumps(context.ToJson(), separators=(',', ':')))
-            return
+    contract_script = generate_deploy_script(
+            function_code.Script,
+            name,
+            version,
+            author,
+            email,
+            description,
+            function_code.ContractProperties,
+            function_code.ReturnType,
+            function_code.ParameterList,
+    )
 
-    except Exception as e:
-        print("could not send: %s " % e)
-        traceback.print_stack()
-        traceback.print_exc()
-'''
+    # test_invoke    
+    bc = GetBlockchain()
+    sn = bc._db.snapshot()
+    accounts = DBCollection(bc._db, sn, DBPrefix.ST_Account, AccountState)
+    assets = DBCollection(bc._db, sn, DBPrefix.ST_Asset, AssetState)
+    validators = DBCollection(bc._db, sn, DBPrefix.ST_Validator, ValidatorState)
+    contracts = DBCollection(bc._db, sn, DBPrefix.ST_Contract, ContractState)
+    storages = DBCollection(bc._db, sn, DBPrefix.ST_Storage, StorageItem)
+
+
+    tx = InvocationTransaction()
+    tx.outputs = []
+    tx.inputs = []
+    tx.Version = 1
+    tx.scripts = []
+    tx.Script = binascii.unhexlify(contract_script)
+
+    script_table = CachedScriptTable(contracts)
+    service = StateMachine(accounts, validators, assets, contracts, storages, None)
+    contract = wallet.GetDefaultContract()
+    tx.Attributes = [TransactionAttribute(usage=TransactionAttributeUsage.Script, data=Crypto.ToScriptHash(contract.Script, unhex=False).Data)]
+    tx = wallet.MakeTransaction(tx=tx)
+
+    engine = ApplicationEngine(
+            trigger_type=TriggerType.Application,
+            container=tx,
+            table=script_table,
+            service=service,
+            gas=tx.Gas,
+            testMode=True
+    )   
+    engine.LoadScript(tx.Script, False)
+    success = engine.Execute()
+    if not success:
+        raise Exception('exec failed')
+    
+    service.ExecutionCompleted(engine, success)
+
+    consumed = engine.GasConsumed() - Fixed8.FromDecimal(10)
+    consumed = consumed.Ceil()
+
+    net_fee = None
+    tx_gas = None
+
+    if consumed <= Fixed8.Zero():
+        net_fee = Fixed8.FromDecimal(.0001)
+        tx_gas = Fixed8.Zero()
+    else:
+        tx_gas = consumed
+        net_fee = Fixed8.Zero()
+    tx.Gas = tx_gas
+    tx.outputs = []
+    tx.Attributes = []
+
+    # InvokeContract
+    from_addr = lookup_addr_str(wallet, from_addr)
+    tx = wallet.MakeTransaction(tx=tx, fee=Fixed8.Zero(), use_standard=True, from_addr=from_addr)
+    if tx is None:
+        raise Exception("no gas")
+
+
+    context = ContractParametersContext(tx)
+    ms = StreamManager.GetStream()
+    writer = BinaryWriter(ms)
+    tx.Serialize(writer)
+    ms.flush()
+    binary_tx = ms.ToArray()
+    return {'context': context.ToJson(), 'tx': binary_tx.decode(), 'hash': function_code.ScriptHash().To0xString()}
+
+
+
+    return {1: 1}
+

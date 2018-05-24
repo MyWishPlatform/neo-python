@@ -117,7 +117,6 @@ class JsonRpcApi:
             return self.get_custom_error_payload(request_id, e.code, e.message)
 
         except Exception as e:
-            raise
             error = JsonRpcError.internalError(str(e))
             return self.get_custom_error_payload(request_id, error.code, error.message)
 
@@ -237,8 +236,11 @@ class JsonRpcApi:
             result = NodeLeader.Instance().Relay(transaction)
             return result
 
-        elif method == "mw_maketransaction":
-            return MyWishMethods.construct(self.wallet, params)
+        elif method == "mw_construct_send_tx":
+            return MyWishMethods.construct_send_tx(self.wallet, params)
+
+        elif method == "mw_construct_deploy_tx":
+            return MyWishMethods.construct_deploy_tx(self.wallet, params)
 
         elif method == "submitblock":
             raise NotImplementedError()
