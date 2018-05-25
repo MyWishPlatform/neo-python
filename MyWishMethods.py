@@ -304,7 +304,7 @@ def construct_deploy_tx(wallet, params):
 
     # InvokeContract
     from_addr = lookup_addr_str(wallet, from_addr)
-    tx = wallet.MakeTransaction(tx=tx, fee=Fixed8.Zero(), use_standard=True, from_addr=from_addr)
+    tx = wallet.MakeTransaction(tx=tx, fee=net_fee, use_standard=True, from_addr=from_addr)
     if tx is None:
         raise Exception("no gas")
 
@@ -411,9 +411,11 @@ def construct_invoke_tx(wallet, params):
     tx.outputs = outputs
     tx.Attributes = []
 
+
+
     # InvokeContract
     from_addr = lookup_addr_str(wallet, from_addr)
-    tx = wallet.MakeTransaction(tx=tx, fee=Fixed8.Zero(), use_standard=True, from_addr=from_addr)
+    tx = wallet.MakeTransaction(tx=tx, fee=net_fee, use_standard=True, from_addr=from_addr)
     if tx is None:
         raise Exception("no gas")
 
