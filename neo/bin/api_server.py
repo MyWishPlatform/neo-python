@@ -156,9 +156,11 @@ def main():
     elif args.mainnet:
         settings.setup_mainnet()
         public_key = PUBLIC_KEY_MAINNET
+        is_mainnet = True
     elif args.testnet:
         settings.setup_testnet()
         public_key = PUBLIC_KEY_TESTNET
+        is_mainnet = False
     elif args.privnet:
         settings.setup_privnet()
     elif args.coznet:
@@ -219,7 +221,7 @@ def main():
     d.setDaemon(True)  # daemonizing the thread will kill it when the main thread is quit
     d.start()
 
-    wallet = OnlyPublicWallet(public_key)
+    wallet = OnlyPublicWallet(public_key, is_mainnet)
     walletdb_loop = task.LoopingCall(wallet.ProcessBlocks)
     walletdb_loop.start(.1)
 

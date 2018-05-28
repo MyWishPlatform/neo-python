@@ -56,8 +56,8 @@ class OnlyPublicKeyPair(KeyPair):
 
 
 class OnlyPublicWallet(UserWallet):
-    def __init__(self, public):
-        self._path = 'test123'
+    def __init__(self, public, is_mainnet):
+        self._path = 'main123' if is_mainnet else 'test123'
         self.AddressVersion = 23
         self._lock = RLock()
         self._indexedDB = Blockchain.Default()
