@@ -144,6 +144,7 @@ class JsonRpcApi:
 
         elif method == "getblock":
             # this should work for either str or int
+
             block = Blockchain.Default().GetBlock(params[0])
             if not block:
                 raise JsonRpcError(-100, "Unknown block")
@@ -244,6 +245,15 @@ class JsonRpcApi:
 
         elif method == "mw_construct_invoke_tx":
             return MyWishMethods.construct_invoke_tx(self.wallet, params)
+
+        elif method == "getapplicationlog":
+            assert(all([x in '1234567890abcdefABCDEFxX' for x in params[0]])) # prevent traversal
+            try:
+                with open('/home/neo/neo-python/notis/' + params[0]) as f:
+                    res =  [json.loads(x) for x in f.read().split('\n') if x]
+                    return [{'name': x['notify_type'], 'contract': x['contract'], 'args': x['payload']} for x in res]
+            except FileNotFoundError:
+                return ([])
 
         elif method == "submitblock":
             raise NotImplementedError()

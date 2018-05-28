@@ -143,13 +143,28 @@ class SmartContractEvent(SerializableMixin):
         if self.contract and self.contract.IsNEP5Contract:
             self.token = self.contract._nep_token
 
-    def ToJson(self):
+    def MWToJson(self):
+        jsn = {
+            'type': self.event_type,
+            'notify_type': self.Type,
+            'contract': self.contract_hash.To0xString(),
+            'block': self.block_number,
+            'tx': self.tx_hash.To0xString(),
+            'payload': [binascii.hexlify(x).decode() if isinstance(x,bytes) else binascii.hexlify(str(x).encode()).decode() for x in self.event_payload],
+            'is_success': self.execution_success,
 
+        }
+
+        return jsn
+
+    def ToJson(self):
+        logger.info(self.event_payload)
         jsn = {
             'type': self.event_type,
             'contract': self.contract_hash.To0xString(),
             'block': self.block_number,
-            'tx': self.tx_hash.To0xString()
+            'tx': self.tx_hash.To0xString(),
+
         }
 
         if self.event_type in [SmartContractEvent.CONTRACT_CREATED, SmartContractEvent.CONTRACT_MIGRATED]:

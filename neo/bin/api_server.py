@@ -37,6 +37,7 @@ import argparse
 import threading
 from time import sleep
 from logging.handlers import SysLogHandler
+import json
 
 import logzero
 from logzero import logger
@@ -56,6 +57,7 @@ from neo.api.REST.RestApi import RestApi
 
 from neo.Network.NodeLeader import NodeLeader
 from neo.Settings import settings
+from neo.EventHub import events
 from MyWishMethods import OnlyPublicWallet
 from settings_local import PUBLIC_KEY_TESTNET, PUBLIC_KEY_MAINNET
 
@@ -66,6 +68,16 @@ LOGFILE_BACKUP_COUNT = 3  # 3 logfiles history
 # Set the PID file, possible to override with env var PID_FILE
 PID_FILE = os.getenv("PID_FILE", "/tmp/neopython-api-server.pid")
 
+
+@events.on("SmartContract.Runtime.Notify")
+def save_event(event):
+    jsn = event.MWToJson()
+    if jsn['notify_type'] in ('auction', 'birth'):
+        return
+    fname = '/home/neo/neo-python/notis/' + jsn['tx']
+
+    with open(fname, 'a') as f:
+        f.write(json.dumps(jsn) + '\n')
 
 def write_pid_file():
     """ Write a pid file, to easily kill the service """
