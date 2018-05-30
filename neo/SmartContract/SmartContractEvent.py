@@ -204,7 +204,7 @@ class NotifyEvent(SmartContractEvent):
         try:
             return self.notify_type.decode('utf-8')
         except:
-            return '<decode error>'
+            return '<cannot decode>'
 
     @property
     def AddressTo(self):
