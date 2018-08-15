@@ -106,7 +106,6 @@ def construct_and_send(prompter, wallet, arguments, prompt_password=True):
         print(tx.ToJson())
 
 
-        raise
 
         if context.Completed:
 
