@@ -78,7 +78,10 @@ class FunctionCode(SerializableMixin):
         """
         writer.WriteVarBytes(self.Script)
         writer.WriteVarBytes(self.ParameterList)
-        writer.WriteByte(self.ReturnType)
+        try:
+            writer.WriteByte(self.ReturnType)
+        except:
+            writer.WriteByte(b'\ff')
 
     def ToJson(self):
         """
