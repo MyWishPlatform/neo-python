@@ -1,8 +1,11 @@
 from neo.Prompt.Commands.Invoke import InvokeContract, InvokeWithTokenVerificationScript
-from neo.Prompt.Utils import get_asset_id, get_from_addr
+from neo.Prompt.Utils import get_asset_id, get_from_addr, get_tx_attr_from_args
+from neo.Wallets.NEP5Token import NEP5Token
 from neocore.Fixed8 import Fixed8
 from prompt_toolkit import prompt
 from decimal import Decimal
+from neo.Core.TX.TransactionAttribute import TransactionAttribute, TransactionAttributeUsage
+import binascii
 
 
 def token_send(wallet, args, prompt_passwd=True):
@@ -119,13 +122,13 @@ def token_get_allowance(wallet, args, verbose=False):
 def token_mint(wallet, args, prompt_passwd=True):
     token = get_asset_id(wallet, args[0])
     mint_to_addr = args[1]
-
+    args, invoke_attrs = get_tx_attr_from_args(args)
     if len(args) < 3:
         raise Exception("please specify assets to attach")
 
     asset_attachments = args[2:]
 
-    tx, fee, results = token.Mint(wallet, mint_to_addr, asset_attachments)
+    tx, fee, results = token.Mint(wallet, mint_to_addr, asset_attachments, invoke_attrs=invoke_attrs)
 
     if results[0] is not None:
         print("\n-----------------------------------------------------------")
@@ -140,7 +143,7 @@ def token_mint(wallet, args, prompt_passwd=True):
                 print("incorrect password")
                 return
 
-        return InvokeWithTokenVerificationScript(wallet, tx, token, fee)
+        return InvokeWithTokenVerificationScript(wallet, tx, token, fee, invoke_attrs=invoke_attrs)
 
     else:
         print("Could not register addresses: %s " % str(results[0]))
@@ -180,12 +183,18 @@ def token_crowdsale_register(wallet, args, prompt_passwd=True):
     return False
 
 
-def do_token_transfer(token, wallet, from_address, to_address, amount, prompt_passwd=True):
+def do_token_transfer(token, wallet, from_address, to_address, amount, prompt_passwd=True, tx_attributes=[]):
     if from_address is None:
         print("Please specify --from-addr={addr} to send NEP5 tokens")
         return False
 
-    tx, fee, results = token.Transfer(wallet, from_address, to_address, amount)
+    # because we cannot differentiate between a normal and multisig from_addr, and because we want to make
+    # sending NEP5 tokens straight forward even when sending from multisig addresses, we include the script_hash
+    # for verification by default to the transaction attributes. See PR/Issue: https://github.com/CityOfZion/neo-python/pull/491
+    from_script_hash = binascii.unhexlify(bytes(wallet.ToScriptHash(from_address).ToString2(), 'utf-8'))
+    tx_attributes.append(TransactionAttribute(usage=TransactionAttributeUsage.Script, data=from_script_hash))
+
+    tx, fee, results = token.Transfer(wallet, from_address, to_address, amount, tx_attributes=tx_attributes)
 
     if tx is not None and results is not None and len(results) > 0:
 
@@ -206,6 +215,39 @@ def do_token_transfer(token, wallet, from_address, to_address, amount, prompt_pa
 
     print("could not transfer tokens")
     return False
+
+
+def token_history(wallet, db, args):
+    if len(args) < 1:
+        print("Please provide the token symbol of the token you wish consult")
+        return False
+
+    if not db:
+        print("Unable to fetch history, notification database not enabled")
+        return False
+
+    token = get_asset_id(wallet, args[0])
+
+    if not isinstance(token, NEP5Token):
+        print("The given symbol does not represent a loaded NEP5 token")
+        return False
+
+    events = db.get_by_contract(token.ScriptHash)
+
+    addresses = wallet.Addresses
+    print("-----------------------------------------------------------")
+    print("Recent transaction history (last = more recent):")
+    for event in events:
+        if event.Type != 'transfer':
+            continue
+        if event.AddressFrom in addresses:
+            print(f"[{event.AddressFrom}]: Sent {string_from_amount(token, event.Amount)}"
+                  f" {args[0]} to {event.AddressTo}")
+        if event.AddressTo in addresses:
+            print(f"[{event.AddressTo}]: Received {string_from_amount(token, event.Amount)}"
+                  f" {args[0]} from {event.AddressFrom}")
+    print("-----------------------------------------------------------")
+    return True
 
 
 def amount_from_string(token, amount_str):

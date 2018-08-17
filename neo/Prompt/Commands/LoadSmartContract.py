@@ -2,13 +2,15 @@ import binascii
 from neo.Prompt.Utils import parse_param
 from neo.Core.FunctionCode import FunctionCode
 from neo.Core.State.ContractState import ContractPropertyState
-from prompt_toolkit import prompt
+from neo.SmartContract.ContractParameterType import ContractParameterType
+from prompt_toolkit.shortcuts import PromptSession
 import json
 from neo.VM.ScriptBuilder import ScriptBuilder
 from neo.Prompt.Utils import get_arg
 from neocore.Cryptography.Crypto import Crypto
 from neo.Core.Blockchain import Blockchain
 from neo.SmartContract.Contract import Contract
+from neocore.BigInteger import BigInteger
 
 
 def ImportContractAddr(wallet, args):
@@ -65,7 +67,7 @@ def LoadContract(args):
     if type(params) is str:
         params = params.encode('utf-8')
 
-    return_type = bytearray(binascii.unhexlify(str(args[2]).encode('utf-8')))
+    return_type = BigInteger(ContractParameterType.FromString(args[2]).value)
 
     needs_storage = bool(parse_param(args[3]))
     needs_dynamic_invoke = bool(parse_param(args[4]))
@@ -119,7 +121,7 @@ def GatherLoadedContractParams(args, script):
     if type(params) is str:
         params = params.encode('utf-8')
 
-    return_type = bytearray(binascii.unhexlify(str(args[1]).encode('utf-8')))
+    return_type = BigInteger(ContractParameterType.FromString(args[1]).value)
 
     needs_storage = bool(parse_param(args[2]))
     needs_dynamic_invoke = bool(parse_param(args[3]))
@@ -137,38 +139,20 @@ def GatherLoadedContractParams(args, script):
     return out
 
 
-def GatherContractDetails(function_code, prompter):
-    name = None
-    version = None
-    author = None
-    email = None
-    description = None
+def GatherContractDetails(function_code):
 
     print("Please fill out the following contract details:")
-    name = prompt("[Contract Name] > ",
-                  completer=prompter.get_completer(),
-                  get_bottom_toolbar_tokens=prompter.get_bottom_toolbar,
-                  style=prompter.token_style)
 
-    version = prompt("[Contract Version] > ",
-                     completer=prompter.get_completer(),
-                     get_bottom_toolbar_tokens=prompter.get_bottom_toolbar,
-                     style=prompter.token_style)
+    from neo.bin.prompt import PromptInterface
 
-    author = prompt("[Contract Author] > ",
-                    completer=prompter.get_completer(),
-                    get_bottom_toolbar_tokens=prompter.get_bottom_toolbar,
-                    style=prompter.token_style)
+    session = PromptSession(completer=PromptInterface.prompt_completer,
+                            history=PromptInterface.history)
 
-    email = prompt("[Contract Email] > ",
-                   completer=prompter.get_completer(),
-                   get_bottom_toolbar_tokens=prompter.get_bottom_toolbar,
-                   style=prompter.token_style)
-
-    description = prompt("[Contract Description] > ",
-                         completer=prompter.get_completer(),
-                         get_bottom_toolbar_tokens=prompter.get_bottom_toolbar,
-                         style=prompter.token_style)
+    name = session.prompt("[Contract Name] > ")
+    version = session.prompt("[Contract Version] > ")
+    author = session.prompt("[Contract Author] > ")
+    email = session.prompt("[Contract Email] > ")
+    description = session.prompt("[Contract Description] > ")
 
     print("Creating smart contract....")
     print("                 Name: %s " % name)
@@ -181,12 +165,12 @@ def GatherContractDetails(function_code, prompter):
     print(json.dumps(function_code.ToJson(), indent=4))
 
     return generate_deploy_script(function_code.Script, name, version, author, email, description,
-                                  function_code.ContractProperties, function_code.ReturnType,
+                                  function_code.ContractProperties, function_code.ReturnTypeBigInteger,
                                   function_code.ParameterList)
 
 
 def generate_deploy_script(script, name='test', version='test', author='test', email='test',
-                           description='test', contract_properties=0, return_type=bytearray(b'\xff'), parameter_list=[]):
+                           description='test', contract_properties=0, return_type=BigInteger(255), parameter_list=[]):
     sb = ScriptBuilder()
 
     plist = parameter_list
@@ -233,5 +217,6 @@ def ImportMultiSigContractAddr(wallet, args):
         wallet.AddContract(verification_contract)
 
         print("Added multi-sig contract address %s to wallet" % address)
+        return address
 
     return 'Hello'

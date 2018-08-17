@@ -14,7 +14,7 @@ import sys
 import logzero
 import pip
 from neocore.Cryptography import Helper
-from neorpc.Client import RPCClient
+from neorpc.Client import RPCClient, NEORPCException
 from neorpc.Settings import settings as rpc_settings
 
 from neo import __version__
@@ -23,14 +23,6 @@ dir_current = os.path.dirname(os.path.abspath(__file__))
 
 # ROOT_INSTALL_PATH is the root path of neo-python, whether installed as package or from git.
 ROOT_INSTALL_PATH = os.path.abspath(os.path.join(dir_current, ".."))
-
-USER_HOME_DIR = os.path.expanduser('~')
-# PATH_USER_DATA is the root path where to store data (Chain databases, history, etc.)
-PATH_USER_DATA = os.path.join(USER_HOME_DIR, ".neopython")  # Works for both Windows and *nix
-
-# Make sure the data path exists (only if the home directory also exists)
-if os.path.isdir(USER_HOME_DIR) and not os.path.isdir(PATH_USER_DATA):
-    os.mkdir(PATH_USER_DATA)
 
 # This detects if we are running from an 'editable' version (like ``python neo/bin/prompt.py``)
 # or from a packaged install version from pip
@@ -88,7 +80,7 @@ class SettingsHolder:
     PUBLISH_TX_FEE = None
     REGISTER_TX_FEE = None
 
-    DATA_DIR_PATH = PATH_USER_DATA
+    DATA_DIR_PATH = None
     LEVELDB_PATH = None
     NOTIFICATION_DB_PATH = None
 
@@ -162,7 +154,11 @@ class SettingsHolder:
 
     # Setup methods
     def setup(self, config_file):
-        """ Load settings from a JSON config file """
+        """ Setup settings from a JSON config file """
+        if not self.DATA_DIR_PATH:
+            # Setup default data dir
+            self.set_data_dir(None)
+
         with open(config_file) as data_file:
             data = json.load(data_file)
 
@@ -236,10 +232,16 @@ class SettingsHolder:
         self.setup(FILENAME_SETTINGS_COZNET)
 
     def set_data_dir(self, path):
-        if path == '.':
+        if not path:
+            path_user_home = os.path.expanduser('~')
+            self.DATA_DIR_PATH = os.path.join(path_user_home, ".neopython")  # Works for both Windows and *nix
+        elif path == '.':
             self.DATA_DIR_PATH = os.getcwd()
         else:
             self.DATA_DIR_PATH = path
+
+        if not os.path.exists(self.DATA_DIR_PATH):
+            os.makedirs(self.DATA_DIR_PATH)
 
     def set_max_peers(self, num_peers):
         try:
@@ -292,6 +294,7 @@ class SettingsHolder:
             except Exception as e:
                 logzero.logger.error("Could not create 'Chains' directory at %s %s" % (chain_path, e))
 
+        warn_migration = False
         # Add a warning for migration purposes if we created a chain dir
         if warn_migration and ROOT_INSTALL_PATH != self.DATA_DIR_PATH:
             if os.path.exists(os.path.join(ROOT_INSTALL_PATH, 'Chains')):
@@ -308,8 +311,10 @@ class SettingsHolder:
         """
         rpc_settings.setup(self.RPC_LIST)
         client = RPCClient()
-        version = client.get_version()
-        if not version:
+
+        try:
+            version = client.get_version()
+        except NEORPCException:
             raise PrivnetConnectionError("Error: private network container doesn't seem to be running, or RPC is not enabled.")
 
         print("Privatenet useragent '%s', nonce: %s" % (version["useragent"], version["nonce"]))
@@ -337,7 +342,8 @@ class SettingsHolder:
 # Settings instance used by external modules
 settings = SettingsHolder()
 
-# Load testnet settings as default
+# Load testnet settings as default. This is useful to provide default data/db directories
+# to any code using "from neo.Settings import settings"
 settings.setup_testnet()
 
 # By default, set loglevel to INFO. DEBUG just print a lot of internal debug statements

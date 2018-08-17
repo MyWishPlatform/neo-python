@@ -1,5 +1,7 @@
 from neocore.IO.Mixins import SerializableMixin
 from neocore.Cryptography.Crypto import Crypto
+from neocore.BigInteger import BigInteger
+from neo.SmartContract.ContractParameterType import ContractParameterType
 
 
 class FunctionCode(SerializableMixin):
@@ -12,6 +14,10 @@ class FunctionCode(SerializableMixin):
     _scriptHash = None
 
     ContractProperties = None
+
+    @property
+    def ReturnTypeBigInteger(self):
+        return BigInteger(self.ReturnType)
 
     @property
     def HasStorage(self):
@@ -35,14 +41,14 @@ class FunctionCode(SerializableMixin):
         from neo.Core.State.ContractState import ContractPropertyState
         return self.ContractProperties & ContractPropertyState.HasDynamicInvoke > 0
 
-    def __init__(self, script=None, param_list=None, return_type=None, contract_properties=0):
+    def __init__(self, script=None, param_list=None, return_type=255, contract_properties=0):
         self.Script = script
         if param_list is None:
             self.ParameterList = []
         else:
             self.ParameterList = param_list
 
-        self.ReturnType = return_type
+        self.ReturnType = ContractParameterType.FromString(return_type).value
 
         self.ContractProperties = contract_properties
 

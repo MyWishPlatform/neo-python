@@ -4,14 +4,16 @@ Run only thse tests:
     $ python -m unittest neo.api.JSONRPC.test_json_rpc_api
 """
 import json
-import pprint
 import binascii
 import os
+from tempfile import mkdtemp
 from klein.test.test_resource import requestMock
 
 from neo import __version__
 from neo.api.JSONRPC.JsonRpcApi import JsonRpcApi
 from neo.Utils.BlockchainFixtureTestCase import BlockchainFixtureTestCase
+from neo.Implementations.Wallets.peewee.UserWallet import UserWallet
+from neo.Wallets.utils import to_aes_key
 from neo.IO.Helper import Helper
 from neocore.UInt160 import UInt160
 from neocore.UInt256 import UInt256
@@ -485,3 +487,110 @@ class JsonRpcApiTestCase(BlockchainFixtureTestCase):
         # To avoid messing up the next tests
         node.Peers = []
         node.ADDRS = []
+
+    def test_getbalance_no_wallet(self):
+        req = self._gen_rpc_req("getbalance", params=["some id here"])
+        mock_req = mock_request(json.dumps(req).encode("utf-8"))
+        res = json.loads(self.app.home(mock_req))
+
+        error = res.get('error', {})
+
+        self.assertEqual(error.get('code', None), -400)
+        self.assertEqual(error.get('message', None), "Access denied.")
+
+    def test_getbalance_neo_with_wallet(self):
+        test_wallet_path = os.path.join(mkdtemp(), "getbalance.db3")
+        self.app.wallet = UserWallet.Create(
+            test_wallet_path,
+            to_aes_key('awesomepassword')
+        )
+
+        neo_id = "c56f33fc6ecfcd0c225c4ab356fee59390af8560be0e930faebe74a6daff7c9b"
+        req = self._gen_rpc_req("getbalance", params=[neo_id])
+        mock_req = mock_request(json.dumps(req).encode("utf-8"))
+        res = json.loads(self.app.home(mock_req))
+
+        self.assertIn('Balance', res.get('result').keys())
+        self.assertIn('Confirmed', res.get('result').keys())
+
+        self.app.wallet.Close()
+        self.app.wallet = None
+        os.remove(test_wallet_path)
+
+    def test_getbalance_token_with_wallet(self):
+        test_wallet_path = os.path.join(mkdtemp(), "getbalance.db3")
+        self.app.wallet = UserWallet.Create(
+            test_wallet_path,
+            to_aes_key('awesomepassword')
+        )
+
+        fake_token_id = "fd941304d9cf36f31cd141c7c7029d81b1efa4f3"
+        req = self._gen_rpc_req("getbalance", params=[fake_token_id])
+        mock_req = mock_request(json.dumps(req).encode("utf-8"))
+        res = json.loads(self.app.home(mock_req))
+
+        self.assertIn('Balance', res.get('result').keys())
+        self.assertNotIn('Confirmed', res.get('result').keys())
+
+        self.app.wallet.Close()
+        self.app.wallet = None
+        os.remove(test_wallet_path)
+
+    def test_listaddress_no_wallet(self):
+        req = self._gen_rpc_req("listaddress", params=[])
+        mock_req = mock_request(json.dumps(req).encode("utf-8"))
+        res = json.loads(self.app.home(mock_req))
+
+        error = res.get('error', {})
+
+        self.assertEqual(error.get('code', None), -400)
+        self.assertEqual(error.get('message', None), "Access denied.")
+
+    def test_listaddress_with_wallet(self):
+        test_wallet_path = os.path.join(mkdtemp(), "listaddress.db3")
+        self.app.wallet = UserWallet.Create(
+            test_wallet_path,
+            to_aes_key('awesomepassword')
+        )
+
+        req = self._gen_rpc_req("listaddress", params=[])
+        mock_req = mock_request(json.dumps(req).encode("utf-8"))
+        res = json.loads(self.app.home(mock_req))
+        results = res.get('result', [])
+        self.assertGreater(len(results), 0)
+        self.assertIn(results[0].get('address', None),
+                      self.app.wallet.Addresses)
+        self.app.wallet.Close()
+        self.app.wallet = None
+        os.remove(test_wallet_path)
+
+    def test_getnewaddress_no_wallet(self):
+        req = self._gen_rpc_req("getnewaddress", params=[])
+        mock_req = mock_request(json.dumps(req).encode("utf-8"))
+        res = json.loads(self.app.home(mock_req))
+
+        error = res.get('error', {})
+
+        self.assertEqual(error.get('code', None), -400)
+        self.assertEqual(error.get('message', None), "Access denied.")
+
+    def test_getnewaddress_with_wallet(self):
+        test_wallet_path = os.path.join(mkdtemp(), "getnewaddress.db3")
+        self.app.wallet = UserWallet.Create(
+            test_wallet_path,
+            to_aes_key('awesomepassword')
+        )
+
+        old_addrs = self.app.wallet.Addresses
+
+        req = self._gen_rpc_req("getnewaddress", params=[])
+        mock_req = mock_request(json.dumps(req).encode("utf-8"))
+        res = json.loads(self.app.home(mock_req))
+        result = res.get('result')
+
+        self.assertNotIn(result, old_addrs)
+        self.assertIn(result, self.app.wallet.Addresses)
+
+        self.app.wallet.Close()
+        self.app.wallet = None
+        os.remove(test_wallet_path)

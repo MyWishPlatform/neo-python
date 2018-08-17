@@ -1,7 +1,10 @@
 import sys
+from neocore.IO.Mixins import SerializableMixin
+from neo.Core.Size import Size as s
+from neo.Core.Size import GetVarSize
 
 
-class CoinReference:
+class CoinReference(SerializableMixin):
     PrevHash = None
 
     PrevIndex = None
@@ -24,7 +27,7 @@ class CoinReference:
         Returns:
             int: size.
         """
-        return sys.getsizeof(self.PrevHash) + sys.getsizeof(int)
+        return s.uint256 + s.uint16
 
     def Deserialize(self, reader):
         """
@@ -70,7 +73,7 @@ class CoinReference:
         return False
 
     def __hash__(self):
-        return int.from_bytes(self.PrevHash.ToBytes(), 'little') + self.PrevIndex
+        return int.from_bytes(self.PrevHash.Data + bytearray(self.PrevIndex), 'little')
 
     def ToJson(self):
         """

@@ -4,6 +4,7 @@ from neocore.UInt160 import UInt160
 from neocore.UInt256 import UInt256
 from neocore.BigInteger import BigInteger
 from neocore.Cryptography.ECCurve import ECDSA
+import binascii
 
 
 class ContractParameter:
@@ -16,7 +17,7 @@ class ContractParameter:
         """
 
         Args:
-            type (neo.SmartContract.ContractParameterType): The type of the parameter
+            type (neo.SmartContract.ContractParameterType.ContractParameterType): The type of the parameter
             value (*): The value of the parameter
         """
         self.Type = type
@@ -67,7 +68,8 @@ class ContractParameter:
         elif type == ContractParameterType.Boolean:
             return ContractParameter(type, value=item.GetBoolean())
         elif type == ContractParameterType.Array:
-            return ContractParameter(type, value=item.GetArray())
+            output = [ContractParameter.ToParameter(subitem) for subitem in item.GetArray()]
+            return ContractParameter(type, value=output)
         elif type == ContractParameterType.String:
             return ContractParameter(type, value=item.GetString())
         elif type == ContractParameterType.InteropInterface:
@@ -76,7 +78,7 @@ class ContractParameter:
         else:
             return ContractParameter(type, value=item.GetByteArray())
 
-    def ToJson(self):
+    def ToJson(self, auto_hex=True):
         """
         Converts a ContractParameter instance to a json representation
 
@@ -86,9 +88,14 @@ class ContractParameter:
         jsn = {}
         jsn['type'] = str(ContractParameterType(self.Type))
 
-        if self.Type in [ContractParameterType.Signature, ContractParameterType.ByteArray]:
+        if self.Type == ContractParameterType.Signature:
             jsn['value'] = self.Value.hex()
 
+        elif self.Type == ContractParameterType.ByteArray:
+            if auto_hex:
+                jsn['value'] = self.Value.hex()
+            else:
+                jsn['value'] = self.Value
         elif self.Type == ContractParameterType.Boolean:
             jsn['value'] = self.Value
 
@@ -110,8 +117,15 @@ class ContractParameter:
 
             res = []
             for item in self.Value:
-                res.append(item.ToJson())
+                if item:
+                    res.append(item.ToJson(auto_hex=auto_hex))
             jsn['value'] = res
+
+        elif self.Type == ContractParameterType.InteropInterface:
+            try:
+                jsn['value'] = self.Value.ToJson()
+            except Exception as e:
+                pass
 
         return jsn
 

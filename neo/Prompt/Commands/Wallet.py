@@ -1,16 +1,19 @@
 from neo.Core.Blockchain import Blockchain
 from neo.Wallets.NEP5Token import NEP5Token
 from neo.Core.TX.ClaimTransaction import ClaimTransaction
+from neo.Core.TX.Transaction import ContractTransaction
 from neo.Core.TX.Transaction import TransactionOutput
 from neo.Core.TX.TransactionAttribute import TransactionAttribute, TransactionAttributeUsage
 from neo.SmartContract.ContractParameterContext import ContractParametersContext
 from neo.Network.NodeLeader import NodeLeader
-from neo.Prompt.Utils import get_asset_id, get_from_addr
+from neo.Prompt.Utils import get_asset_id, get_from_addr, get_arg
 from neocore.Fixed8 import Fixed8
 from neocore.UInt160 import UInt160
 from prompt_toolkit import prompt
 import binascii
 import json
+import math
+from logzero import logger
 
 
 def DeleteAddress(prompter, wallet, addr):
@@ -107,12 +110,32 @@ def AddAlias(wallet, addr, title):
 
 def ClaimGas(wallet, require_password=True, args=None):
 
-    unclaimed_coins = wallet.GetUnclaimedCoins()
-    unclaimed_coin_refs = [coin.Reference for coin in unclaimed_coins]
+    if args:
+        params, from_addr_str = get_from_addr(args)
+    else:
+        params = None
+        from_addr_str = None
 
-    if len(unclaimed_coin_refs) == 0:
+    unclaimed_coins = wallet.GetUnclaimedCoins()
+
+    unclaimed_count = len(unclaimed_coins)
+    if unclaimed_count == 0:
         print("no claims to process")
         return False
+
+    max_coins_per_claim = None
+    if params:
+        max_coins_per_claim = get_arg(params, 0, convert_to_int=True)
+        if not max_coins_per_claim:
+            print("max_coins_to_claim must be an integer")
+            return False
+        if max_coins_per_claim <= 0:
+            print("max_coins_to_claim must be greater than zero")
+            return False
+    if max_coins_per_claim and unclaimed_count > max_coins_per_claim:
+        unclaimed_coins = unclaimed_coins[:max_coins_per_claim]
+
+    unclaimed_coin_refs = [coin.Reference for coin in unclaimed_coins]
 
     available_bonus = Blockchain.Default().CalculateBonusIgnoreClaimed(unclaimed_coin_refs)
 
@@ -129,13 +152,11 @@ def ClaimGas(wallet, require_password=True, args=None):
 
     # the following can be used to claim gas that is in an imported contract_addr
     # example, wallet claim --from-addr={smart contract addr}
-    if args:
-        params, from_addr_str = get_from_addr(args)
-        if from_addr_str:
-            script_hash = wallet.ToScriptHash(from_addr_str)
-            standard_contract = wallet.GetStandardAddress()
-            claim_tx.Attributes = [TransactionAttribute(usage=TransactionAttributeUsage.Script,
-                                                        data=standard_contract.Data)]
+    if from_addr_str:
+        script_hash = wallet.ToScriptHash(from_addr_str)
+        standard_contract = wallet.GetStandardAddress()
+        claim_tx.Attributes = [TransactionAttribute(usage=TransactionAttributeUsage.Script,
+                                                    data=standard_contract.Data)]
 
     claim_tx.outputs = [
         TransactionOutput(AssetId=Blockchain.SystemCoin().Hash, Value=available_bonus, script_hash=script_hash)
@@ -146,6 +167,8 @@ def ClaimGas(wallet, require_password=True, args=None):
 
     print("\n---------------------------------------------------------------")
     print("Will make claim for %s GAS" % available_bonus.ToString())
+    if max_coins_per_claim and unclaimed_count > max_coins_per_claim:
+        print("NOTE: You are claiming GAS on %s unclaimed coins. %s additional claim transactions will be required to claim all available GAS." % (max_coins_per_claim, math.floor(unclaimed_count / max_coins_per_claim)))
     print("------------------------------------------------------------------\n")
 
     if require_password:
@@ -205,4 +228,83 @@ def ShowUnspentCoins(wallet, args):
     for unspent in unspents:
         print('\n-----------------------------------------------')
         print(json.dumps(unspent.ToJson(), indent=4))
-        print(unspent.RefToBytes())
+
+    return unspents
+
+
+def SplitUnspentCoin(wallet, args, prompt_passwd=True):
+    """
+
+    example ``wallet split Ab8RGQEWetkhVqXjPHeGN9LJdbhaFLyUXz neo 1 100``
+    this would split the second unspent neo vin into 100 vouts
+
+    :param wallet:
+    :param args (list): A list of arguments as [Address, asset type, unspent index, divisions]
+
+    :return: bool
+    """
+    try:
+        addr = wallet.ToScriptHash(args[0])
+        asset = get_asset_id(wallet, args[1])
+        index = int(args[2])
+        divisions = int(args[3])
+    except Exception as e:
+        logger.info("Invalid arguments specified: %s " % e)
+        return None
+
+    try:
+        unspentItem = wallet.FindUnspentCoinsByAsset(asset, from_addr=addr)[index]
+    except Exception as e:
+        logger.info("Could not find unspent item for asset with index %s %s :  %s" % (asset, index, e))
+        return None
+
+    outputs = split_to_vouts(asset, addr, unspentItem.Output.Value, divisions)
+
+    contract_tx = ContractTransaction(outputs=outputs, inputs=[unspentItem.Reference])
+    ctx = ContractParametersContext(contract_tx)
+    wallet.Sign(ctx)
+
+    print("Splitting: %s " % json.dumps(contract_tx.ToJson(), indent=4))
+    if prompt_passwd:
+        passwd = prompt("[Password]> ", is_password=True)
+        if not wallet.ValidatePassword(passwd):
+            print("incorrect password")
+            return None
+
+    if ctx.Completed:
+
+        contract_tx.scripts = ctx.GetScripts()
+
+        relayed = NodeLeader.Instance().Relay(contract_tx)
+
+        if relayed:
+            wallet.SaveTransaction(contract_tx)
+            print("Relayed Tx: %s " % contract_tx.Hash.ToString())
+            return contract_tx
+        else:
+            print("Could not relay tx %s " % contract_tx.Hash.ToString())
+
+    return None
+
+
+def split_to_vouts(asset, addr, input_val, divisions):
+    divisor = Fixed8(divisions)
+
+    new_amounts = input_val / divisor
+    outputs = []
+    total = Fixed8.Zero()
+
+    if asset == Blockchain.Default().SystemShare().Hash:
+        if new_amounts % Fixed8.FD() > Fixed8.Zero():
+            new_amounts = new_amounts.Ceil()
+
+    while total < input_val:
+        if total + new_amounts < input_val:
+            outputs.append(TransactionOutput(asset, new_amounts, addr))
+            total += new_amounts
+        else:
+            diff = input_val - total
+            outputs.append(TransactionOutput(asset, diff, addr))
+            total += diff
+
+    return outputs

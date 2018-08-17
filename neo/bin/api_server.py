@@ -41,12 +41,14 @@ import json
 
 import logzero
 from logzero import logger
+from prompt_toolkit import prompt
 
 # Twisted logging
 from twisted.logger import STDLibLogObserver, globalLogPublisher
 
 # Twisted and Klein methods and modules
-from twisted.internet import reactor, task
+from twisted.internet import reactor, task, endpoints
+from twisted.web.server import Site
 
 # neo methods and modules
 from neo.Core.Blockchain import Blockchain
@@ -54,6 +56,8 @@ from neo.Implementations.Blockchains.LevelDB.LevelDBBlockchain import LevelDBBlo
 from neo.api.JSONRPC.JsonRpcApi import JsonRpcApi
 from neo.Implementations.Notifications.LevelDB.NotificationDB import NotificationDB
 from neo.api.REST.RestApi import RestApi
+from neo.Wallets.utils import to_aes_key
+from neo.Implementations.Wallets.peewee.UserWallet import UserWallet
 
 from neo.Network.NodeLeader import NodeLeader
 from neo.Settings import settings
@@ -128,6 +132,11 @@ def main():
     parser.add_argument("--maxpeers", action="store", default=5,
                         help="Max peers to use for P2P Joining")
 
+    # If a wallet should be opened
+    parser.add_argument("--wallet",
+                        action="store",
+                        help="Open wallet. Will allow you to use methods that require an open wallet")
+
     # host
     parser.add_argument("--host", action="store", type=str, help="Hostname ( for example 127.0.0.1)", default="0.0.0.0")
 
@@ -150,7 +159,11 @@ def main():
         parser.print_help()
         return
 
-    # Setup depending on command line arguments. By default, the testnet settings are already loaded.
+    # Setting the datadir must come before setting the network, else the wrong path is checked at net setup.
+    if args.datadir:
+        settings.set_data_dir(args.datadir)
+
+    # Network configuration depending on command line arguments. By default, the testnet settings are already loaded.
     if args.config:
         settings.setup(args.config)
     elif args.mainnet:
@@ -166,8 +179,6 @@ def main():
     elif args.coznet:
         settings.setup_coznet()
 
-    if args.datadir:
-        settings.set_data_dir(args.datadir)
     if args.maxpeers:
         settings.set_max_peers(args.maxpeers)
 
@@ -195,6 +206,25 @@ def main():
         else:
             print("Logging to stdout and stderr")
 
+    if args.wallet:
+        if not os.path.exists(args.wallet):
+            print("Wallet file not found")
+            return
+
+        passwd = os.environ.get('NEO_PYTHON_JSONRPC_WALLET_PASSWORD', None)
+        if not passwd:
+            passwd = prompt("[password]> ", is_password=True)
+
+        password_key = to_aes_key(passwd)
+        try:
+            wallet = UserWallet.Open(args.wallet, password_key)
+
+        except Exception as e:
+            print(f"Could not open wallet {e}")
+            return
+    else:
+        wallet = None
+
     # Disable logging smart contract events
     settings.set_log_smart_contract_events(False)
 
@@ -210,6 +240,11 @@ def main():
     Blockchain.RegisterBlockchain(blockchain)
     dbloop = task.LoopingCall(Blockchain.Default().PersistBlocks)
     dbloop.start(.1)
+
+    # If a wallet is open, make sure it processes blocks
+    if wallet:
+        walletdb_loop = task.LoopingCall(wallet.ProcessBlocks)
+        walletdb_loop.start(1)
 
     # Setup twisted reactor, NodeLeader and start the NotificationDB
     reactor.suggestThreadPoolSize(15)
@@ -228,18 +263,16 @@ def main():
 
     if args.port_rpc:
         logger.info("Starting json-rpc api server on http://%s:%s" % (args.host, args.port_rpc))
-        api_server_rpc = JsonRpcApi(args.port_rpc, wallet)
-#        endpoint_rpc = "tcp:port={0}:interface={1}".format(args.port_rpc, args.host)
-#        endpoints.serverFromString(reactor, endpoint_rpc).listen(Site(api_server_rpc.app.resource()))
-#        reactor.listenTCP(int(args.port_rpc), server.Site(api_server_rpc))
-        api_server_rpc.app.run(args.host, args.port_rpc)
+        api_server_rpc = JsonRpcApi(args.port_rpc, wallet=wallet)
+        endpoint_rpc = "tcp:port={0}:interface={1}".format(args.port_rpc, args.host)
+        endpoints.serverFromString(reactor, endpoint_rpc).listen(Site(api_server_rpc.app.resource()))
 
     if args.port_rest:
         logger.info("Starting REST api server on http://%s:%s" % (args.host, args.port_rest))
         api_server_rest = RestApi()
-#        endpoint_rest = "tcp:port={0}:interface={1}".format(args.port_rest, args.host)
-#        endpoints.serverFromString(reactor, endpoint_rest).listen(Site(api_server_rest.app.resource()))
-        api_server_rest.app.run(args.host, args.port_rest)
+        endpoint_rest = "tcp:port={0}:interface={1}".format(args.port_rest, args.host)
+        endpoints.serverFromString(reactor, endpoint_rest).listen(Site(api_server_rest.app.resource()))
+#        api_server_rest.app.run(args.host, args.port_rest)
 
     reactor.run()
 
@@ -248,7 +281,9 @@ def main():
     NotificationDB.close()
     Blockchain.Default().Dispose()
     NodeLeader.Instance().Shutdown()
-    wallet.Close()
+    if wallet:
+        wallet.Close()
+
 
 if __name__ == "__main__":
     main()

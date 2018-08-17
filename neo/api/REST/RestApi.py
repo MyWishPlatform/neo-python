@@ -15,7 +15,7 @@ from neocore.UInt160 import UInt160
 from neocore.UInt256 import UInt256
 from neo.Settings import settings
 from neo.api.utils import cors_header
-
+import math
 
 API_URL_PREFIX = "/v1"
 
@@ -67,8 +67,9 @@ class RestApi:
                             <pre>
 {
     "page_len": 1000,
+    "total_pages": 1,
     "total": 4,
-    "page": 0,
+    "page": 1,
     "current_height": 982506,
     "results": [
         {
@@ -153,6 +154,8 @@ class RestApi:
         try:
             hash = UInt256.ParseString(tx_hash)
             tx, height = bc.GetTransaction(hash)
+            if not tx:
+                return self.format_message("Could not find transaction for hash %s" % (tx_hash))
             block_notifications = self.notif.get_by_block(height - 1)
             for n in block_notifications:
                 if n.tx_hash == tx.Hash:
@@ -203,29 +206,42 @@ class RestApi:
     def get_status(self, request):
         request.setHeader('Content-Type', 'application/json')
         return json.dumps({
-            'current_height': Blockchain.Default().Height,
+            'current_height': Blockchain.Default().Height + 1,
             'version': settings.VERSION_NAME,
             'num_peers': len(NodeLeader.Instance().Peers)
         }, indent=4, sort_keys=True)
 
     def format_notifications(self, request, notifications, show_none=False):
+
         notif_len = len(notifications)
         page_len = 500
-        page = 0
+        page = 1
         message = ''
         if b'page' in request.args:
             try:
                 page = int(request.args[b'page'][0])
             except Exception as e:
                 print("could not get page: %s" % e)
+        if b'pagesize' in request.args:
+            try:
+                page_len = int(request.args[b'pagesize'][0])
+            except Exception as e:
+                print("could not get page length: %s" % e)
 
-        start = page_len * page
+        # note, we want pages to start from 1, not 0, to be
+        # in sync with C# version
+        # we'll also convert page 0 to page1
+        if page == 0:
+            page = 1
+
+        start = page_len * (page - 1)
         end = start + page_len
 
         if start > notif_len:
             message = 'page greater than result length'
 
         notifications = notifications[start:end]
+        total_pages = math.ceil(notif_len / page_len)
 
         return json.dumps({
             'current_height': Blockchain.Default().Height + 1,
@@ -233,7 +249,8 @@ class RestApi:
             'total': notif_len,
             'results': None if show_none else [n.ToJson() for n in notifications],
             'page': page,
-            'page_len': page_len
+            'page_len': page_len,
+            'total_pages': total_pages
         }, indent=4, sort_keys=True)
 
     def format_message(self, message):
@@ -243,5 +260,6 @@ class RestApi:
             'total': 0,
             'results': None,
             'page': 0,
-            'page_len': 0
+            'page_len': 0,
+            'total_pages': 0
         }, indent=4, sort_keys=True)

@@ -8,20 +8,20 @@ See also:
 """
 import json
 import base58
-import random
 import binascii
 from json.decoder import JSONDecodeError
 
 from klein import Klein
-from logzero import logger
 
 from neo.Settings import settings
 from neo.Core.Blockchain import Blockchain
 from neo.api.utils import json_response, cors_header
 from neo.Core.State.AccountState import AccountState
 from neo.Core.TX.Transaction import Transaction
+from neo.Core.State.CoinState import CoinState
 from neocore.UInt160 import UInt160
 from neocore.UInt256 import UInt256
+from neocore.Fixed8 import Fixed8
 from neo.Core.Helper import Helper
 from neo.Network.NodeLeader import NodeLeader
 from neo.Core.State.StorageKey import StorageKey
@@ -30,6 +30,9 @@ from neo.SmartContract.ContractParameter import ContractParameter
 from neo.VM.ScriptBuilder import ScriptBuilder
 from neo.VM.VMState import VMStateStr
 import MyWishMethods
+from neo.Implementations.Wallets.peewee.Models import Account
+from neo.Prompt.Utils import get_asset_id
+
 
 class JsonRpcError(Exception):
     """
@@ -73,7 +76,7 @@ class JsonRpcApi:
     app = Klein()
     port = None
 
-    def __init__(self, port, wallet):
+    def __init__(self, port, wallet=None):
         self.port = port
         self.wallet = wallet
 
@@ -264,6 +267,28 @@ class JsonRpcApi:
         elif method == "getpeers":
             return self.get_peers()
 
+        elif method == "getbalance":
+            if self.wallet:
+                return self.get_balance(params)
+            else:
+                raise JsonRpcError(-400, "Access denied.")
+
+        elif method == "listaddress":
+            if self.wallet:
+                return self.list_address()
+            else:
+                raise JsonRpcError(-400, "Access denied.")
+
+        elif method == "getnewaddress":
+            if self.wallet:
+                keys = self.wallet.CreateKey()
+                account = Account.get(
+                    PublicKeyHash=keys.PublicKeyHash.ToBytes()
+                )
+                return account.contract_set[0].Address.ToString()
+            else:
+                raise JsonRpcError(-400, "Access denied.")
+
         raise JsonRpcError.methodNotFound()
 
     def get_custom_error_payload(self, request_id, code, message):
@@ -351,4 +376,37 @@ class JsonRpcApi:
                 result['unconnected'].append({"address": addr,
                                               "port": int(port)})
 
+        return result
+
+    def get_balance(self, params):
+        if len(params) != 1:
+            raise JsonRpcError(-400, "Params should contain 1 id.")
+
+        asset_id = get_asset_id(self.wallet, params[0])
+        result = {}
+
+        if type(asset_id) is UInt256:
+            total = Fixed8(0)
+            for c in self.wallet.GetCoins():
+                if c.Output.AssetId == asset_id and c.State & CoinState.WatchOnly == 0:
+                    total += c.Output.Value
+
+            result['Balance'] = str(total)
+            result["Confirmed"] = str(self.wallet.GetBalance(asset_id).value / Fixed8.D)
+        else:
+            result["Balance"] = str(self.wallet.GetBalance(asset_id))
+
+        return result
+
+    def list_address(self):
+        """Get information about all the addresses present on the open wallet"""
+        result = []
+        for addrStr in self.wallet.Addresses:
+            addr = self.wallet.GetAddress(addrStr)
+            result.append({
+                "address": addrStr,
+                "haskey": not addr.IsWatchOnly,
+                "label": None,
+                "watchonly": addr.IsWatchOnly,
+            })
         return result

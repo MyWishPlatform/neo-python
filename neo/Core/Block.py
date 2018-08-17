@@ -12,6 +12,7 @@ from neo.Core.Header import Header
 from neo.Core.Witness import Witness
 from neocore.Fixed8 import Fixed8
 from neo.Blockchain import GetBlockchain
+from neo.Core.Size import GetVarSize
 
 
 class Block(BlockBase, InventoryMixin):
@@ -118,9 +119,7 @@ class Block(BlockBase, InventoryMixin):
         Returns:
             int: size.
         """
-        s = super(Block, self).Size()
-        s = s + sys.getsizeof(self.Transactions)
-
+        s = super(Block, self).Size() + GetVarSize(self.Transactions)
         return s
 
     def CalculatneNetFee(self, transactions):
@@ -192,14 +191,12 @@ class Block(BlockBase, InventoryMixin):
         return self.Hash == other.Hash
 
     @staticmethod
-    def FromTrimmedData(byts, index=None, transaction_method=None):
+    def FromTrimmedData(byts):
         """
         Deserialize a block from raw bytes.
 
         Args:
             byts:
-            index: UNUSED
-            transaction_method: UNUSED
 
         Returns:
             Block:
@@ -215,7 +212,15 @@ class Block(BlockBase, InventoryMixin):
         witness.Deserialize(reader)
         block.Script = witness
 
-        block.Transactions = reader.ReadHashes()
+        bc = GetBlockchain()
+        tx_list = []
+        for tx_hash in reader.ReadHashes():
+            tx = bc.GetTransaction(tx_hash)[0]
+            if not tx:
+                raise Exception("Could not find transaction!\n Are you running code against a valid Blockchain instance?\n Tests that accesses transactions or size of a block but inherit from NeoTestCase instead of BlockchainFixtureTestCase will not work.")
+            tx_list.append(tx)
+
+        block.Transactions = tx_list
 
         StreamManager.ReleaseStream(ms)
 
@@ -258,8 +263,7 @@ class Block(BlockBase, InventoryMixin):
             json['tx'] = ['0x%s' % tx for tx in self.Transactions]
         else:
             json['tx'] = [tx.ToJson() for tx in self.Transactions]
-        
-        json['sys_fee'] = GetBlockchain().GetSysFeeAmount(self.Hash)
+        # json['sys_fee'] = GetBlockchain().GetSysFeeAmount(self.Hash)
         return json
 
     def Trim(self):
@@ -294,7 +298,6 @@ class Block(BlockBase, InventoryMixin):
         if not res:
             return False
 
-        logger.debug("Verifying BLOCK!!")
         from neo.Blockchain import GetBlockchain, GetConsensusAddress
 
         # first TX has to be a miner transaction. other tx after that cant be miner tx

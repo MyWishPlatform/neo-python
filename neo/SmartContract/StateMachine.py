@@ -18,6 +18,7 @@ from neocore.Fixed8 import Fixed8
 from neo.VM.InteropService import StackItem
 from neo.SmartContract.StorageContext import StorageContext
 from neo.SmartContract.StateReader import StateReader
+from neo.SmartContract.ContractParameter import ContractParameter, ContractParameterType
 from neo.EventHub import SmartContractEvent
 
 
@@ -38,19 +39,26 @@ class StateMachine(StateReader):
         self._storages = storages
         self._wb = wb
 
-        self.Register("Neo.Account.SetVotes", self.Account_SetVotes)
-        self.Register("Neo.Validator.Register", self.Validator_Register)
+        # Standard Library
+        self.Register("System.Contract.GetStorageContext", self.Contract_GetStorageContext)
+        self.Register("System.Contract.Destroy", self.Contract_Destroy)
+        self.Register("System.Storage.Put", self.Storage_Put)
+        self.Register("System.Storage.Delete", self.Storage_Delete)
+
+        # Neo specific
         self.Register("Neo.Asset.Create", self.Asset_Create)
         self.Register("Neo.Asset.Renew", self.Asset_Renew)
-        self.Register("Neo.Contract.Create", self.Contract_Create)
         self.Register("Neo.Contract.Migrate", self.Contract_Migrate)
+        self.Register("Neo.Contract.Create", self.Contract_Create)
+
+        # Old
         self.Register("Neo.Contract.GetStorageContext", self.Contract_GetStorageContext)
         self.Register("Neo.Contract.Destroy", self.Contract_Destroy)
         self.Register("Neo.Storage.Put", self.Storage_Put)
         self.Register("Neo.Storage.Delete", self.Storage_Delete)
 
-        self.Register("AntShares.Account.SetVotes", self.Account_SetVotes)
-        self.Register("AntShares.Validator.Register", self.Validator_Register)
+        # Very old
+        self.Register("AntShares.Account.SetVotes", self.Deprecated_Method)
         self.Register("AntShares.Asset.Create", self.Asset_Create)
         self.Register("AntShares.Asset.Renew", self.Asset_Renew)
         self.Register("AntShares.Contract.Create", self.Contract_Create)
@@ -65,6 +73,8 @@ class StateMachine(StateReader):
         # commit storages right away
         if success:
             self.Commit()
+        else:
+            self.ResetState()
 
         super(StateMachine, self).ExecutionCompleted(engine, success, error)
 
@@ -76,91 +86,19 @@ class StateMachine(StateReader):
             self._contracts.Commit(self._wb, False)
             self._storages.Commit(self._wb, False)
 
+    def ResetState(self):
+        self._accounts.Reset()
+        self._validators.Reset()
+        self._assets.Reset()
+        self._contracts.Reset()
+        self._storages.Reset()
+
     def TestCommit(self):
         if self._storages.DebugStorage:
             self._storages.Commit(self._wb, False)
 
-    def Blockchain_GetAccount(self, engine):
-        hash = UInt160(data=engine.EvaluationStack.Pop().GetByteArray())
-        address = Crypto.ToAddress(hash).encode('utf-8')
-
-        account = self._accounts.TryGet(address)
-
-        if account:
-            engine.EvaluationStack.PushT(StackItem.FromInterface(account))
-        else:
-            engine.EvaluationStack.PushT(False)
-
-        return True
-
-    def Blockchain_GetAsset(self, engine):
-
-        hash = UInt256(data=engine.EvaluationStack.Pop().GetByteArray())
-
-        asset = self._assets.TryGet(hash.ToBytes())
-        if asset:
-            engine.EvaluationStack.PushT(StackItem.FromInterface(asset))
-        else:
-            engine.EvaluationStack.PushT(False)
-        return True
-
-    def Blockchain_GetContract(self, engine):
-        hash = UInt160(data=engine.EvaluationStack.Pop().GetByteArray())
-
-        contract = self._contracts.TryGet(hash.ToBytes())
-
-        if contract:
-            engine.EvaluationStack.PushT(StackItem.FromInterface(contract))
-        else:
-            engine.EvaluationStack.PushT(False)
-        return True
-
-    def Account_SetVotes(self, engine):
-
-        try:
-            account = engine.EvaluationStack.Pop().GetInterface()
-
-            vote_list = engine.EvaluationStack.Pop().GetArray()
-        except Exception as e:
-            logger.error("could not get account or votes: %s " % e)
-            return False
-
-        if account is None or len(vote_list) > 1024:
-            return False
-
-        if account.IsFrozen:
-            return False
-
-        balance = account.BalanceFor(Blockchain.SystemShare().Hash)
-
-        if balance == Fixed8.Zero() and len(vote_list) > 0:
-            return False
-
-        acct = self._accounts.GetAndChange(account.AddressBytes)
-        voteset = []
-        for v in vote_list:
-            if v not in voteset:
-                voteset.append(v.GetByteArray())
-        acct.Votes = voteset
-
-        # print("*****************************************************")
-        # print("SET ACCOUNT VOTES %s " % json.dumps(acct.ToJson(), indent=4))
-        # print("*****************************************************")
-        return True
-
-    def Validator_Register(self, engine):
-
-        pubkey = ECDSA.decode_secp256r1(engine.EvaluationStack.Pop().GetByteArray(), unhex=False, check_on_curve=True).G
-        if pubkey.IsInfinity:
-            return False
-
-        if not self.CheckWitnessPubkey(engine, pubkey):
-            return False
-
-        vstate = ValidatorState(pub_key=pubkey)
-        validator = self._validators.GetOrAdd(pubkey.ToBytes(), vstate)
-        engine.EvaluationStack.PushT(StackItem.FromInterface(validator))
-        return True
+    def Deprecated_Method(self, engine):
+        logger.debug("Method No Longer operational")
 
     def Asset_Create(self, engine):
 
@@ -221,7 +159,7 @@ class StateMachine(StateReader):
             expiration=Blockchain.Default().Height + 1 + 2000000, is_frozen=False
         )
 
-        asset = self._assets.GetOrAdd(tx.Hash.ToBytes(), new_asset)
+        asset = self._assets.ReplaceOrAdd(tx.Hash.ToBytes(), new_asset)
 
         # print("*****************************************************")
         # print("CREATED ASSET %s " % tx.Hash.ToBytes())
@@ -316,7 +254,7 @@ class StateMachine(StateReader):
         engine.EvaluationStack.PushT(StackItem.FromInterface(contract))
 
         self.events_to_dispatch.append(
-            SmartContractEvent(SmartContractEvent.CONTRACT_CREATED, [contract],
+            SmartContractEvent(SmartContractEvent.CONTRACT_CREATED, ContractParameter(ContractParameterType.InteropInterface, contract),
                                hash, Blockchain.Default().Height + 1,
                                engine.ScriptContainer.Hash if engine.ScriptContainer else None,
                                test_mode=engine.testMode))
@@ -376,16 +314,15 @@ class StateMachine(StateReader):
             self._contracts_created[hash.ToBytes()] = UInt160(data=engine.CurrentContext.ScriptHash())
 
             if contract.HasStorage:
-
-                for pair in self._storages.Find(engine.CurrentContext.ScriptHash()):
-                    key = StorageKey(script_hash=hash, key=pair.Key.Key)
-                    item = StorageItem(pair.Value.Value)
-                    self._storages.Add(key, item)
+                for key, val in self._storages.Find(engine.CurrentContext.ScriptHash()).items():
+                    key = StorageKey(script_hash=hash, key=key)
+                    item = StorageItem(val)
+                    self._storages.Add(key.ToArray(), item)
 
         engine.EvaluationStack.PushT(StackItem.FromInterface(contract))
 
         self.events_to_dispatch.append(
-            SmartContractEvent(SmartContractEvent.CONTRACT_MIGRATED, [contract],
+            SmartContractEvent(SmartContractEvent.CONTRACT_MIGRATED, ContractParameter(ContractParameterType.InteropInterface, contract),
                                hash, Blockchain.Default().Height + 1,
                                engine.ScriptContainer.Hash if engine.ScriptContainer else None,
                                test_mode=engine.testMode))
@@ -425,57 +362,10 @@ class StateMachine(StateReader):
                     self._storages.Remove(pair.Key)
 
         self.events_to_dispatch.append(
-            SmartContractEvent(SmartContractEvent.CONTRACT_DESTROY, [contract],
+            SmartContractEvent(SmartContractEvent.CONTRACT_DESTROY, ContractParameter(ContractParameterType.InteropInterface, contract),
                                hash, Blockchain.Default().Height + 1,
                                engine.ScriptContainer.Hash if engine.ScriptContainer else None,
                                test_mode=engine.testMode))
-        return True
-
-    def Storage_Get(self, engine):
-
-        context = None
-        try:
-            item = engine.EvaluationStack.Pop()
-            context = item.GetInterface()
-        except Exception as e:
-            logger.error("could not get storage context %s " % e)
-            return False
-
-        if not self.CheckStorageContext(context):
-            return False
-
-        key = engine.EvaluationStack.Pop().GetByteArray()
-        storage_key = StorageKey(script_hash=context.ScriptHash, key=key)
-        item = self._storages.TryGet(storage_key.ToArray())
-
-        keystr = key
-
-        valStr = bytearray(0)
-
-        if item is not None:
-            valStr = bytearray(item.Value)
-
-        if len(key) == 20:
-            keystr = Crypto.ToAddress(UInt160(data=key))
-
-            try:
-                valStr = int.from_bytes(valStr, 'little')
-            except Exception as e:
-                pass
-
-        if item is not None:
-
-            engine.EvaluationStack.PushT(bytearray(item.Value))
-
-        else:
-            engine.EvaluationStack.PushT(bytearray(0))
-
-        self.events_to_dispatch.append(
-            SmartContractEvent(SmartContractEvent.STORAGE_GET, ['%s -> %s' % (keystr, valStr)],
-                               context.ScriptHash, Blockchain.Default().Height + 1,
-                               engine.ScriptContainer.Hash if engine.ScriptContainer else None,
-                               test_mode=engine.testMode))
-
         return True
 
     def Storage_Put(self, engine):
@@ -499,7 +389,7 @@ class StateMachine(StateReader):
 
         new_item = StorageItem(value=value)
         storage_key = StorageKey(script_hash=context.ScriptHash, key=key)
-        item = self._storages.GetOrAdd(storage_key.ToArray(), new_item)
+        item = self._storages.ReplaceOrAdd(storage_key.ToArray(), new_item)
 
         keystr = key
         valStr = bytearray(item.Value)
@@ -513,7 +403,7 @@ class StateMachine(StateReader):
                 pass
 
         self.events_to_dispatch.append(
-            SmartContractEvent(SmartContractEvent.STORAGE_PUT, ['%s -> %s' % (keystr, valStr)],
+            SmartContractEvent(SmartContractEvent.STORAGE_PUT, ContractParameter(ContractParameterType.String, '%s -> %s' % (keystr, valStr)),
                                context.ScriptHash, Blockchain.Default().Height + 1,
                                engine.ScriptContainer.Hash if engine.ScriptContainer else None,
                                test_mode=engine.testMode))
@@ -531,13 +421,14 @@ class StateMachine(StateReader):
 
         storage_key = StorageKey(script_hash=context.ScriptHash, key=key)
 
+        keystr = key
         if len(key) == 20:
             keystr = Crypto.ToAddress(UInt160(data=key))
 
-            self.events_to_dispatch.append(SmartContractEvent(SmartContractEvent.STORAGE_DELETE, [keystr],
-                                                              context.ScriptHash, Blockchain.Default().Height + 1,
-                                                              engine.ScriptContainer.Hash if engine.ScriptContainer else None,
-                                                              test_mode=engine.testMode))
+        self.events_to_dispatch.append(SmartContractEvent(SmartContractEvent.STORAGE_DELETE, ContractParameter(ContractParameterType.String, keystr),
+                                                          context.ScriptHash, Blockchain.Default().Height + 1,
+                                                          engine.ScriptContainer.Hash if engine.ScriptContainer else None,
+                                                          test_mode=engine.testMode))
 
         self._storages.Remove(storage_key.ToArray())
 

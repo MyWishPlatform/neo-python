@@ -1,6 +1,6 @@
 import binascii
 from logzero import logger
-from neo.SmartContract.StorageIterator import StorageIterator
+from neo.SmartContract.Iterable import EnumeratorBase
 
 
 class DBCollection:
@@ -72,6 +72,12 @@ class DBCollection:
             self.Changed = []
             self.Deleted = []
 
+    def Reset(self):
+        for keyval in self.Changed:
+            self.Collection[keyval] = None
+        self.Changed = []
+        self.Deleted = []
+
     def GetAndChange(self, keyval, new_instance=None, debug_item=False):
 
         item = self.TryGet(keyval)
@@ -88,7 +94,23 @@ class DBCollection:
 
         return item
 
+    def ReplaceOrAdd(self, keyval, new_instance):
+
+        item = new_instance
+
+        if keyval in self.Deleted:
+            self.Deleted.remove(keyval)
+
+        self.Add(keyval, item)
+
+        return item
+
     def GetOrAdd(self, keyval, new_instance):
+
+        existing = self.TryGet(keyval)
+
+        if existing:
+            return existing
 
         item = new_instance
 
@@ -169,7 +191,7 @@ class DBCollection:
         # then take the dict and make a list of tuples
         final_collection = [(k, v) for k, v in {**db_results, **candidates}.items()]
 
-        return StorageIterator(iter(final_collection))
+        return EnumeratorBase(iter(final_collection))
 
     def Find(self, key_prefix):
         key_prefix = self.Prefix + key_prefix
@@ -178,7 +200,8 @@ class DBCollection:
             # we want the storage item, not the raw bytes
             item = self.ClassRef.DeserializeFromDB(binascii.unhexlify(val)).Value
             # also here we need to skip the 1 byte storage prefix
-            res[key[21:]] = item
+            res_key = key[21:]
+            res[res_key] = item
         return res
 
     def Destroy(self):

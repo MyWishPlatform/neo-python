@@ -150,7 +150,7 @@ class NEP5Token(VerificationCode, SerializableMixin):
 
         return 0
 
-    def Transfer(self, wallet, from_addr, to_addr, amount):
+    def Transfer(self, wallet, from_addr, to_addr, amount, tx_attributes=[]):
         """
         Transfer a specified amount of the NEP5Token to another address.
 
@@ -159,6 +159,7 @@ class NEP5Token(VerificationCode, SerializableMixin):
             from_addr (str): public address of the account to transfer the given amount from.
             to_addr (str): public address of the account to transfer the given amount to.
             amount (int): quantity to send.
+            tx_attributes (list): a list of TransactionAtribute objects.
 
         Returns:
             tuple:
@@ -171,7 +172,7 @@ class NEP5Token(VerificationCode, SerializableMixin):
                                            [parse_param(from_addr, wallet), parse_param(to_addr, wallet),
                                             parse_param(amount)])
 
-        tx, fee, results, num_ops = test_invoke(sb.ToArray(), wallet, [], from_addr=from_addr)
+        tx, fee, results, num_ops = test_invoke(sb.ToArray(), wallet, [], from_addr=from_addr, invoke_attrs=tx_attributes)
 
         return tx, fee, results
 
@@ -244,7 +245,7 @@ class NEP5Token(VerificationCode, SerializableMixin):
 
         return tx, fee, results
 
-    def Mint(self, wallet, mint_to_addr, attachment_args):
+    def Mint(self, wallet, mint_to_addr, attachment_args, invoke_attrs=None):
         """
         Call the "mintTokens" function of the smart contract.
 
@@ -252,7 +253,7 @@ class NEP5Token(VerificationCode, SerializableMixin):
             wallet (neo.Wallets.Wallet): a wallet instance.
             mint_to_addr (str): public address of the account to mint the tokens to.
             attachment_args: (list): a list of arguments used to attach neo and/or gas to an invoke, eg ['--attach-gas=10.0','--attach-neo=3']
-
+            invoke_attrs: (list): a list of TransactionAttributes to be attached to the mint transaction
         Returns:
             tuple:
                 InvocationTransaction: the transaction.
@@ -263,7 +264,7 @@ class NEP5Token(VerificationCode, SerializableMixin):
 
         invoke_args = invoke_args + attachment_args
 
-        tx, fee, results, num_ops = TestInvokeContract(wallet, invoke_args, None, True, from_addr=mint_to_addr)
+        tx, fee, results, num_ops = TestInvokeContract(wallet, invoke_args, None, True, from_addr=mint_to_addr, invoke_attrs=invoke_attrs)
 
         return tx, fee, results
 

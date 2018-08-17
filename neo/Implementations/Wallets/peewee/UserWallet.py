@@ -9,6 +9,7 @@ from neo.Wallets.Wallet import Wallet
 from neo.Wallets.Coin import Coin as WalletCoin
 from neo.SmartContract.Contract import Contract as WalletContract
 from neo.IO.Helper import Helper
+from neo.Core.Helper import Helper as CoreHelper
 from neo.Core.Blockchain import Blockchain
 from neo.Core.CoinReference import CoinReference
 from neo.Core.TX.Transaction import TransactionOutput
@@ -54,13 +55,12 @@ class UserWallet(Wallet):
             self.on_notify_sc_event(sc_event)
 
     def on_notify_sc_event(self, sc_event):
-        if not sc_event.test_mode:
-            notify_type = sc_event.event_payload[0]
-            if type(notify_type) is bytes:
-                if notify_type == b'hold_created':
-                    self.process_hold_created_event(sc_event.event_payload[1:])
-                elif notify_type in [b'hold_cancelled', b'hold_cleaned_up']:
-                    self.process_destroy_hold(notify_type, sc_event.event_payload[1])
+        if not sc_event.test_mode and isinstance(sc_event.notify_type, bytes):
+            notify_type = sc_event.notify_type
+            if notify_type == b'hold_created':
+                self.process_hold_created_event(sc_event.event_payload[1:])
+            elif notify_type in [b'hold_cancelled', b'hold_cleaned_up']:
+                self.process_destroy_hold(notify_type, sc_event.event_payload[1])
 
     def process_hold_created_event(self, payload):
         if len(payload) == 4:
@@ -90,7 +90,7 @@ class UserWallet(Wallet):
             self._db.create_tables([Account, Address, Coin, Contract, Key, NEP5Token, VINHold,
                                     Transaction, TransactionInfo, NamedAddress], safe=True)
         except Exception as e:
-            logger.error("Could not build database %s " % e)
+            logger.error("Could not build database %s %s " % (e, self._path))
 
     def Migrate(self):
         migrator = SqliteMigrator(self._db)
@@ -103,7 +103,6 @@ class UserWallet(Wallet):
         return self._db
 
     def Rebuild(self):
-        self._lock.acquire()
         try:
             super(UserWallet, self).Rebuild()
 
@@ -114,10 +113,8 @@ class UserWallet(Wallet):
                 c.delete_instance()
             for tx in Transaction.select():
                 tx.delete_instance()
-        finally:
-            self._lock.release()
-
-        logger.debug("wallet rebuild complete")
+        except Exception as e:
+            print("Could not rebuild %s " % e)
 
     def Close(self):
         if self._db:
@@ -416,10 +413,8 @@ class UserWallet(Wallet):
                     Address=address
                 )
                 c.save()
-                logger.debug("saved coin %s " % c)
             except Exception as e:
-                logger.error("COULDN'T SAVE!!!! %s " % e)
-                raise
+                logger.error("[Path: %s ] Could not create coin: %s " % (self._path, e))
 
         for coin in changed:
             for hold in self._holds:
@@ -431,8 +426,7 @@ class UserWallet(Wallet):
                 c.State = coin.State
                 c.save()
             except Exception as e:
-                logger.error("Coulndn't change coin %s %s (coin to change not found)" % (coin, e))
-                raise
+                logger.error("[Path: %s ] could not change coin %s %s (coin to change not found)" % (self._path, coin, e))
 
         for coin in deleted:
             for hold in self._holds:
@@ -442,10 +436,8 @@ class UserWallet(Wallet):
             try:
                 c = Coin.get(TxId=bytes(coin.Reference.PrevHash.Data), Index=coin.Reference.PrevIndex)
                 c.delete_instance()
-
             except Exception as e:
-                logger.error("could not delete coin %s %s " % (coin, e))
-                raise
+                logger.error("[Path: %s] could not delete coin %s %s " % (self._path, coin, e))
 
     @property
     def Addresses(self):
@@ -457,6 +449,14 @@ class UserWallet(Wallet):
             pass
 
         return result
+
+    def GetAddress(self, addrStr):
+        try:
+            script_hash = CoreHelper.AddrStrToScriptHash(addrStr).ToArray()
+            addr = Address.get(ScriptHash=bytes(script_hash))
+        except Exception as e:
+            raise Exception("Address not in wallet")
+        return addr
 
     def TokenBalancesForAddress(self, address):
         if len(self._tokens):

@@ -34,6 +34,7 @@ from neocore.Cryptography.Crypto import Crypto
 from neocore.BigInteger import BigInteger
 from neo.EventHub import events
 
+
 from prompt_toolkit import prompt
 
 
@@ -206,6 +207,9 @@ class LevelDBBlockchain(Blockchain):
 
             else:
                 raise Exception("Database schema changed")
+
+    def GetStates(self, prefix, classref):
+        return DBCollection(self._db, None, prefix, classref)
 
     def GetAccountState(self, script_hash, print_all_accounts=False):
 
@@ -407,6 +411,14 @@ class LevelDBBlockchain(Blockchain):
         logger.info("Could not find transaction for hash %s " % hash)
         return None, -1
 
+    def AddBlockDirectly(self, block):
+        if block.Index != self.Height + 1:
+            raise Exception("Invalid block")
+        if block.Index == len(self._header_index):
+            self.AddHeader(block.Header)
+        self.Persist(block)
+        self.OnPersistCompleted(block)
+
     def AddBlock(self, block):
 
         if not block.Hash.ToBytes() in self._block_cache:
@@ -559,7 +571,7 @@ class LevelDBBlockchain(Blockchain):
             out = bytearray(self._db.get(DBPrefix.DATA_Block + hash))
             out = out[8:]
             outhex = binascii.unhexlify(out)
-            return Block.FromTrimmedData(outhex, 0)
+            return Block.FromTrimmedData(outhex)
         except Exception as e:
             logger.info("Could not get block %s " % e)
         return None
@@ -812,8 +824,8 @@ class LevelDBBlockchain(Blockchain):
 
             self.TXProcessed += len(block.Transactions)
 
-            for event in to_dispatch:
-                events.emit(event.event_type, event)
+        for event in to_dispatch:
+            events.emit(event.event_type, event)
 
     def PersistBlocks(self):
 

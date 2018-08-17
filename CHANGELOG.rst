@@ -3,8 +3,88 @@ Changelog
 
 All notable changes to this project are documented in this file.
 
-[0.6.9] 2018-04-30
+[0.7.6] 2018-08-02
+------------------
+- Adds ability to attach a fee to a ``send`` transaction
+- Update Node selection mechanism
+- Store ``Transactions`` list items inside a ``Block`` in a consistent format.
+- Improved peer connection maintenance
+
+
+[0.7.5] 2018-07-19
 -----------------------
+- Update NodeLeader peer monitoring system
+- Add ability to configure size of requests for blocks as well as block processing queue size
+- Update mainnet bootstrap files
+- Fix size calculations for all serializable classes
+- Add ``size`` key to JSON output of Block and Transaction
+- add prompt command to split VIN to multiple VOUT
+- update notification endpoint to include ``total_pages`` in output, and allow ``pagesize`` paramater to be passed in
+- update seeds for mainnet
+
+[0.7.3] 2018-07-12
+------------------
+- Updated package requirements, removed ``pycrypto`` from all dependencies to fix install error(s) `#485 <https://github.com/CityOfZion/neo-python/issues/485>`_
+- Adds option to enter arguments for smart contract in an 'interactive' mode, which allows for much better parsing of input, activated by passing the ``--i`` flag when invoking.
+- Adds ability to *not* parse address strings such as AeV59NyZtgj5AMQ7vY6yhr2MRvcfFeLWSb when inputting to smart contract by passing the ``--no-parse`` flag
+- Changes the structure of items dispatched in SmartContractEvents to use the ``ContractParameter`` interface for better type inference and variable usage.
+- Fix sending NEP5 tokesn from a multisig address.
+- Bugfix: np-api-server with open wallet now properly processes new blocks
+- Update neo-boa to v0.4.8 and neocore to v0.4.11
+- Add VM support for ``Neo.Contract.IsPayable``
+
+
+[0.7.2] 2018-06-21
+------------------
+- When using a custom datadir (with ``--datadir``), ``np-prompt`` will store log and history files there instead of
+  the default directory. Note: if you use a custom datadir that does not yet exist, ``np-prompt`` starts without
+  history or logs because those files are just created from scratch in the custom datadir.
+- Updated the dependencies
+- Updated MainNet bootstrap files
+- Added ``--wallet`` flag to the ``np-api-server`` command. The server can now open a wallet. `#459 <https://github.com/CityOfZion/neo-python/pull/459>`_
+- Added a partial implementation of the ``listaddress`` RPC method. `#459 <https://github.com/CityOfZion/neo-python/pull/459>`_
+- Added ``getnewaddress`` method to the JSON RPC API `#464 <https://github.com/CityOfZion/neo-python/pull/464>`_
+- Added an implementation of the ``getbalance`` RPC method. `#465 <https://github.com/CityOfZion/neo-python/pull/465>`_
+- updated seed list, change behavior of restarting NodeLeader when connected nodes falls below 2
+- Add Neo.Blockchain.GetTransactionHeight API
+- Updating Enumerator API for parity with `Neo PR #244 <https://github.com/neo-project/neo/pull/244>`_
+- Unifying interop namespace `Neo PR #254 <https://github.com/neo-project/neo/pull/254>`_
+- Update ``neo-boa`` version to v0.4.7 for new Enumerator/Iterator interop methods and additional python opcode support.
+- Fixed REST API ``/status`` ``current_height`` off-by-one `#475 <https://github.com/CityOfZion/neo-python/pull/475>`_
+
+
+[0.7.1] 2018-06-02
+------------------
+- update FunctionCode Return type parsing
+- add ``np-export`` and ``np-import`` commands for importing and exporting of raw block data files
+
+
+[0.7.0] 2018-06-01
+------------------
+- fix a bug with smart-contract parameter string parsing `#412 <https://github.com/CityOfZion/neo-python/issues/412>`_
+- fix ``StateMachine.Contract_Migrate`` and add tests
+- add ability to attach tx attrs to build command and testinvoke.  altered tx attr parsing
+- updated the install instructions present on ``docs``
+- fix issues with some JSON-RPC properties `#418 <https://github.com/CityOfZion/neo-python/issues/418>`_
+- added support for optionally chunking through GAS claims in prompt `#419 <https://github.com/CityOfZion/neo-python/issues/419>`_
+- support RPC and REST endpoints in parallel `#420 <https://github.com/CityOfZion/neo-python/issues/420>`_
+- Added new command ``tkn_history`` to the prompt. It shows the recorded history of transfers of a given NEP5 token, that are related to the open wallet.
+- fix current block lookup during smart contract event processing `#426 <https://github.com/CityOfZion/neo-python/issues/426>`_
+- fixed custom datadir setup for prompt and api-server
+- added ``mint`` smart-contract event to NotificationDB `#433 <https://github.com/CityOfZion/neo-python/pull/433>`_
+- Allow ``SmartContract`` to use a hash with or without 0x prefix
+- update to neo-boa v0.4.4
+- Update to `neo-python-core <https://github.com/CityOfZion/neo-python-core/blob/master/HISTORY.rst>`_ v0.4.8:
+- Create wallets with ``np-utils --create-wallet``
+- ``BigInteger(0)`` now is ``b'\x00'``
+- CheckWitness now only accepts 20 or 33 byte addresses,CheckWitness faults VM when input is bad rather than returning ``False``
+- When creating contracts, ReturnType is now written by ScriptBuilder as a BigInteger
+- Allow sending of transaction attributes with invocations
+- Added signing utility ``np-sign`` for using a wallet, WIF, or NEP2 to sign an arbitrary message.
+
+
+[0.6.9] 2018-04-30
+------------------
 - alter logging
 - fix issue with dispatching transfer events when ``from_addr`` is ``False``
 - add TPS monitor to ``prompt`` ``state`` command
@@ -19,7 +99,7 @@ All notable changes to this project are documented in this file.
 
 
 [0.6.8] 2018-04-26
------------------------
+------------------
 - add ``ServiceEnabled`` boolean to settings to determine whether nodes should send other nodes blocks
 - updated new block retrieval mechanism
 - fix for token_delete command not removing tokens from wallet file
@@ -35,7 +115,7 @@ All notable changes to this project are documented in this file.
 
 
 [0.6.7] 2018-04-06
------------------------
+------------------
 - Update all the requirements
 - Networking changes
 - added ``--maxpeers`` option for ``np-prompt`` and ``np-api-server``.  This allows p2p discovery of new nodes up to the value specified
@@ -55,7 +135,7 @@ All notable changes to this project are documented in this file.
 
 
 [0.6.5] 2018-03-31
------------------------
+------------------
 - Changed the ``eval()`` call when parsing the `--tx-attr` param to parse only json. Reduced the surface and options available on the other 2 eval calls to improve security.
 - fix wallet rebuild database lock errors (`PR #365 <https://github.com/CityOfZion/neo-python/pull/365>`_)
 - Fixed `synced_watch_only_balances` being always zero issue (`#209  <https://github.com/CityOfZion/neo-python/issues/209>`_)

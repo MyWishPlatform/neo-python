@@ -16,14 +16,15 @@ class SmartContract:
     on smart contract calls to `Runtime.Notify` or `Runtime.Log`:
 
         from neo.contrib.smartcontract import SmartContract
+        from neo.SmartContract.ContractParameter import ContractParameter, ContractParameterType
 
         smart_contract = SmartContract("6537b4bd100e514119e3a7ab49d520d20ef2c2a4")
 
         @smart_contract.on_notify
         def sc_notify(event):
             print("SmartContract Runtime.Notify event:", event)
-            if len(event.event_payload):
-                print(event.event_payload[0].decode("utf-8"))
+            if isinstance(event.event_payload, ContractParameter) and event.event_payload.Type == ContractParameterType.Array and len(event.event_payload.Value):
+                print(event.event_payload.Value[0].Value.decode("utf-8"))
 
     Handlers receive as `event` argument an instance of the `neo.EventHub.SmartContractEvent`
     object. It has the following properties:
@@ -43,11 +44,19 @@ class SmartContract:
     event_handlers = None
 
     def __init__(self, contract_hash):
+        """
+        Instantiate a new SmartContract for a specific contract_hash
+        contract_hash can optionally be prefixed with '0x'
+        """
         assert contract_hash
         self.contract_hash = str(contract_hash)
-        self.event_handlers = defaultdict(list)
+
+        if self.contract_hash[:2] == "0x":
+            self.contract_hash = self.contract_hash[2:]
 
         # Handle EventHub events for SmartContract decorators
+        self.event_handlers = defaultdict(list)
+
         @events.on(SmartContractEvent.RUNTIME_NOTIFY)
         @events.on(SmartContractEvent.RUNTIME_LOG)
         @events.on(SmartContractEvent.EXECUTION_SUCCESS)

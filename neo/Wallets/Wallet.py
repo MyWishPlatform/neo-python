@@ -67,7 +67,7 @@ class Wallet:
 
         Args:
             path (str): A path indicating where to create or open the wallet.
-            passwordKey (str): A password to use in creating or opening the wallet.
+            passwordKey (aes_key): A password that has been converted to aes key with neo.Wallets.utils.to_aes_key
             create (bool): Whether to create the wallet or simply open.
         """
 
@@ -671,6 +671,8 @@ class Wallet:
                 blockcount += 1
 
             self.SaveStoredData("Height", self._current_height)
+        except Exception as e:
+            logger.warn("Could not process ::: %s " % e)
         finally:
             self._lock.release()
 
@@ -699,7 +701,6 @@ class Wallet:
                     if state & AddressState.InWallet > 0:
 
                         # if its in the wallet, check to see if the coin exists yet
-
                         key = CoinReference(tx.Hash, index)
 
                         # if it exists, update it, otherwise create a new one
@@ -708,7 +709,7 @@ class Wallet:
                             coin.State |= CoinState.Confirmed
                             changed.add(coin)
                         else:
-                            newcoin = Coin.CoinFromRef(coin_ref=key, tx_output=output, state=CoinState.Confirmed)
+                            newcoin = Coin.CoinFromRef(coin_ref=key, tx_output=output, state=CoinState.Confirmed, transaction=tx)
                             self._coins[key] = newcoin
                             added.add(newcoin)
 
@@ -1203,6 +1204,23 @@ class Wallet:
             success |= res
 
         return success
+
+    def SignMessage(self, message, script_hash):
+        """
+        Sign a message with a specified script_hash.
+
+        Args:
+            message (str): a hex encoded message to sign
+            script_hash (UInt160): a bytearray (len 20).
+
+        Returns:
+            str: the signed message
+        """
+
+        keypair = self.GetKeyByScriptHash(script_hash)
+        prikey = bytes(keypair.PrivateKey)
+        res = Crypto.Default().Sign(message, prikey)
+        return res, keypair.PublicKey
 
     def GetSyncedBalances(self):
         """

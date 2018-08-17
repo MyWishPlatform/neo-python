@@ -106,7 +106,7 @@ class Blockchain:
         prev_hash = UInt256(data=bytearray(32))
         timestamp = int(datetime(2016, 7, 15, 15, 8, 21, tzinfo=pytz.utc).timestamp())
         index = 0
-        consensus_data = 2083236893  # 向比特币致敬 ( Pay Tribute To Bitcoin )
+        consensus_data = 2083236893  # Pay tribute To Bitcoin
         next_consensus = Blockchain.GetConsensusAddress(Blockchain.StandbyValidators())
         script = Witness(bytearray(0), bytearray(PUSHT))
 
@@ -143,35 +143,31 @@ class Blockchain:
 
     @property
     def CurrentBlockHash(self):
-        # abstract
         pass
 
     @property
     def CurrentHeaderHash(self):
-        # abstract
         pass
 
     @property
     def HeaderHeight(self):
-        # abstract
         pass
 
     @property
     def Height(self):
-        # abstract
         pass
 
     @property
     def CurrentBlock(self):
-        # abstract
         pass
 
     def AddBlock(self, block):
-        # abstract
+        pass
+
+    def AddBlockDirectly(self, block):
         pass
 
     def AddHeaders(self, headers):
-        # abstract
         pass
 
     @property
@@ -283,30 +279,27 @@ class Blockchain:
         return amount_claimed
 
     def OnNotify(self, notification):
-        #        logger.info("on notifiy %s " % notification)
         self.Notify.on_change(notification)
 
     def ContainsBlock(self, hash):
-        # abstract
         pass
 
     def ContainsTransaction(self, hash):
-        # abstract
         pass
 
     def ContainsUnspent(self, hash, index):
-        # abstract
         pass
 
     def Dispose(self):
-        # abstract
+        pass
+
+    def GetStates(self, prefix, classref):
         pass
 
     def GetAccountStateByIndex(self, index):
         pass
 
     def GetAccountState(self, script_hash):
-        # abstract
         pass
 
     def GetAssetState(self, assetId):
@@ -379,7 +372,7 @@ class Blockchain:
 
         votes = Counter([len(vs.PublicKeys) for vs in self.GetVotes(others)]).items()
 
-        # TODO: 此处排序可能将耗费大量内存，考虑是否采用其它机制
+        # TODO: Sorting here may cost a lot of memory, considering whether to use other mechanisms
         #           votes = GetVotes(others).OrderBy(p => p.PublicKeys.Length).ToArray()
         #            int validators_count = (int)votes.WeightedFilter(0.25, 0.75, p => p.Count.GetData(), (p, w) => new
         #            {

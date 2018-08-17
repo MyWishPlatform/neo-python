@@ -20,7 +20,7 @@ reqs = [str(ir.req) for ir in install_reqs]
 setup(
     name='neo-python',
     python_requires='>=3.6',
-    version='0.6.9',
+    version='0.7.6',
     description="Python Node and SDK for the NEO blockchain",
     long_description=readme,
     author="Thomas Saunders",
@@ -35,6 +35,9 @@ setup(
             'np-api-server=neo.bin.api_server:main',
             'np-bootstrap=neo.bin.bootstrap:main',
             'np-reencrypt-wallet=neo.bin.reencrypt_wallet:main',
+            'np-sign=neo.bin.sign_message:main',
+            'np-export=neo.bin.export_blocks:main',
+            'np-import=neo.bin.import_blocks:main',
         ],
     },
     include_package_data=True,
