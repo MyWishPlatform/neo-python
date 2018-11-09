@@ -37,13 +37,14 @@ from threading import RLock
 from logzero import logger
 from neo.Core.Blockchain import Blockchain
 from neo.SmartContract.Contract import Contract as WalletContract
-from neo.Implementations.Wallets.peewee.Models import Account, Address, Contract
+from neo.Implementations.Wallets.peewee.Models import Account, Address, Contract, VINHold
 from neocore.IO.BinaryWriter import BinaryWriter
 from neo.IO.MemoryStream import StreamManager
 from neo.Prompt.Utils import parse_param
 from neo.Core.FunctionCode import FunctionCode
 from neo.Core.State.ContractState import ContractPropertyState
 from neo.Prompt.Commands.Invoke import InvokeContract, TestInvokeContract, test_invoke
+from neo.EventHub import SmartContractEvent, events
 
 class OnlyPublicKeyPair(KeyPair):
     def __init__(self, public_key):
@@ -66,7 +67,11 @@ class OnlyPublicWallet(UserWallet):
 
         self._keys = {}
         self._contracts = self.LoadContracts()
-#        for public in ['0294cd0a9e77f358f709e69d9375680b1eafe75373645192b5b251260f484577ea']:
+
+        for key, contract in self._contracts.items():
+            print('contract ScriptHash', contract.ScriptHash)
+        print('initializing', flush=True)
+
         kp = OnlyPublicKeyPair(public)
         self._keys[kp.PublicKeyHash.ToBytes()] = kp
         contract = WalletContract.CreateSignatureContract(kp.PublicKey)
@@ -92,13 +97,57 @@ class OnlyPublicWallet(UserWallet):
         self._watch_only = self.LoadWatchOnly()
         self._tokens = self.LoadNEP5Tokens()
         self._coins = self.LoadCoins()
-        self.initialize_holds()
+#        self.initialize_holds()
+
+        self._holds = VINHold.filter(IsComplete=False)
+
+        # Handle EventHub events for SmartContract decorators
+        @events.on(SmartContractEvent.RUNTIME_NOTIFY)
+        def call_on_event(sc_event):
+            # Make sure this event is for this specific smart contract
+            self.on_notify_sc_event(sc_event)
+
+
+
         try:
             self._current_height = int(self.LoadStoredData('Height'))
         except:
             print('setting height to 0')
             self._current_height = 0
             self.SaveStoredData('Height', self._current_height)
+
+    def on_notify_sc_event(self, sc_event):
+        if not sc_event.test_mode and isinstance(sc_event.notify_type, bytes):
+            notify_type = sc_event.notify_type
+            if notify_type == b'hold_created':
+                self.process_hold_created_event(sc_event.event_payload[1:])
+            elif notify_type in [b'hold_cancelled', b'hold_cleaned_up']:
+                self.process_destroy_hold(notify_type, sc_event.event_payload[1])
+
+    def process_hold_created_event(self, payload):
+        if len(payload) == 4:
+            vin = payload[0]
+            from_addr = UInt160(data=payload[1])
+            to_addr = UInt160(data=payload[2])
+            amount = int.from_bytes(payload[3], 'little')
+            v_index = int.from_bytes(vin[32:], 'little')
+            v_txid = UInt256(data=vin[0:32])
+            if to_addr.ToBytes() in self._contracts.keys() and from_addr in self._watch_only:
+                hold, created = VINHold.get_or_create(
+                    Index=v_index, Hash=v_txid.ToBytes(), FromAddress=from_addr.ToBytes(), ToAddress=to_addr.ToBytes(), Amount=amount, IsComplete=False
+                )
+                if created:
+                    self.LoadHolds()
+
+    def process_destroy_hold(self, destroy_type, vin_to_cancel):
+        completed = self.LoadCompletedHolds()
+        for hold in completed:
+            if hold.Vin == vin_to_cancel:
+                logger.info('[%s] Deleting hold %s' % (destroy_type, json.dumps(hold.ToJson(), indent=4)))
+                hold.delete_instance()
+
+
+
 
     def OnProcessNewBlock(self, block, added, changed, deleted):
         if not self._current_height % 1000:
@@ -251,11 +300,11 @@ def construct_deploy_tx(wallet, params):
     # test_invoke    
     bc = GetBlockchain()
     sn = bc._db.snapshot()
-    accounts = DBCollection(bc._db, sn, DBPrefix.ST_Account, AccountState)
-    assets = DBCollection(bc._db, sn, DBPrefix.ST_Asset, AssetState)
-    validators = DBCollection(bc._db, sn, DBPrefix.ST_Validator, ValidatorState)
-    contracts = DBCollection(bc._db, sn, DBPrefix.ST_Contract, ContractState)
-    storages = DBCollection(bc._db, sn, DBPrefix.ST_Storage, StorageItem)
+    accounts = DBCollection(bc._db, DBPrefix.ST_Account, AccountState)
+    assets = DBCollection(bc._db, DBPrefix.ST_Asset, AssetState)
+    validators = DBCollection(bc._db, DBPrefix.ST_Validator, ValidatorState)
+    contracts = DBCollection(bc._db, DBPrefix.ST_Contract, ContractState)
+    storages = DBCollection(bc._db, DBPrefix.ST_Storage, StorageItem)
 
 
     tx = InvocationTransaction()
@@ -360,11 +409,11 @@ def construct_invoke_tx(wallet, params):
 
     bc = GetBlockchain()
     sn = bc._db.snapshot()
-    accounts = DBCollection(bc._db, sn, DBPrefix.ST_Account, AccountState)
-    assets = DBCollection(bc._db, sn, DBPrefix.ST_Asset, AssetState)
-    validators = DBCollection(bc._db, sn, DBPrefix.ST_Validator, ValidatorState)
-    contracts = DBCollection(bc._db, sn, DBPrefix.ST_Contract, ContractState)
-    storages = DBCollection(bc._db, sn, DBPrefix.ST_Storage, StorageItem)
+    accounts = DBCollection(bc._db, DBPrefix.ST_Account, AccountState)
+    assets = DBCollection(bc._db, DBPrefix.ST_Asset, AssetState)
+    validators = DBCollection(bc._db, DBPrefix.ST_Validator, ValidatorState)
+    contracts = DBCollection(bc._db, DBPrefix.ST_Contract, ContractState)
+    storages = DBCollection(bc._db, DBPrefix.ST_Storage, StorageItem)
 
 
     tx = InvocationTransaction()

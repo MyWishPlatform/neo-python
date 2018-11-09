@@ -111,6 +111,9 @@ class JsonRpcApi:
             return self.get_custom_error_payload(request_id, e.code, e.message)
 
         except Exception as e:
+            import traceback
+            import sys
+            print('\n'.join(traceback.format_exception(*sys.exc_info())), flush=True)
             error = JsonRpcError.internalError(str(e))
             return self.get_custom_error_payload(request_id, error.code, error.message)
 
