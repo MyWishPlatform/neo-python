@@ -1,11 +1,12 @@
 import binascii
-from logzero import logger
 from neo.SmartContract.Iterable import EnumeratorBase
+from neo.logging import log_manager
+
+logger = log_manager.getLogger('db')
 
 
 class DBCollection:
     DB = None
-    #    SN = None
     Prefix = None
 
     ClassRef = None
@@ -19,7 +20,10 @@ class DBCollection:
 
     DebugStorage = False
 
-    def __init__(self, db, sn, prefix, class_ref):
+    _ChangedResetState = None
+    _DeletedResetState = None
+
+    def __init__(self, db, prefix, class_ref):
 
         self.DB = db
 
@@ -30,6 +34,9 @@ class DBCollection:
         self.Collection = {}
         self.Changed = []
         self.Deleted = []
+
+        self._ChangedResetState = None
+        self._DeletedResetState = None
 
     @property
     def Keys(self):
@@ -71,12 +78,15 @@ class DBCollection:
         else:
             self.Changed = []
             self.Deleted = []
+            self._ChangedResetState = None
+            self._DeletedResetState = None
 
     def Reset(self):
-        for keyval in self.Changed:
-            self.Collection[keyval] = None
-        self.Changed = []
-        self.Deleted = []
+        self.Changed = self._ChangedResetState
+        self.Deleted = self._DeletedResetState
+
+        self._ChangedResetState = None
+        self._DeletedResetState = None
 
     def GetAndChange(self, keyval, new_instance=None, debug_item=False):
 
@@ -173,6 +183,10 @@ class DBCollection:
         if keyval not in self.Deleted:
             self.Deleted.append(keyval)
 
+    def MarkForReset(self):
+        self._ChangedResetState = self.Changed
+        self._DeletedResetState = self.Deleted
+
     def MarkChanged(self, keyval):
         if keyval not in self.Changed:
             self.Changed.append(keyval)
@@ -206,10 +220,11 @@ class DBCollection:
 
     def Destroy(self):
         self.DB = None
-        #        self.SN = None
         self.Collection = None
         self.ClassRef = None
         self.Prefix = None
         self.Deleted = None
         self.Changed = None
+        self._ChangedResetState = None
+        self._DeletedResetState = None
         logger = None

@@ -32,24 +32,31 @@ from neocore.Fixed8 import Fixed8
 from neo.Settings import settings
 from neo.Core.Blockchain import Blockchain
 from neo.EventHub import events
-from logzero import logger
 from prompt_toolkit import prompt
+from copy import deepcopy
+from neo.logging import log_manager
+
+logger = log_manager.getLogger()
 
 from neocore.Cryptography.ECCurve import ECDSA
-
+from neocore.UInt160 import UInt160
 from neo.VM.OpCode import PACK
 
 DEFAULT_MIN_FEE = Fixed8.FromDecimal(.0001)
 
 
 def InvokeContract(wallet, tx, fee=Fixed8.Zero(), from_addr=None, owners=None):
-
     if from_addr is not None:
         from_addr = lookup_addr_str(wallet, from_addr)
 
     wallet_tx = wallet.MakeTransaction(tx=tx, fee=fee, use_standard=True, from_addr=from_addr)
 
     if wallet_tx:
+
+        if owners:
+            for owner in list(owners):
+                wallet_tx.Attributes.append(TransactionAttribute(usage=TransactionAttributeUsage.Script, data=owner))
+            wallet_tx.Attributes = make_unique_script_attr(tx.Attributes)
 
         context = ContractParametersContext(wallet_tx)
         wallet.Sign(context)
@@ -63,7 +70,7 @@ def InvokeContract(wallet, tx, fee=Fixed8.Zero(), from_addr=None, owners=None):
 
             relayed = False
 
-#            print("SENDING TX: %s " % json.dumps(wallet_tx.ToJson(), indent=4))
+            #            print("SENDING TX: %s " % json.dumps(wallet_tx.ToJson(), indent=4))
 
             relayed = NodeLeader.Instance().Relay(wallet_tx)
 
@@ -86,7 +93,6 @@ def InvokeContract(wallet, tx, fee=Fixed8.Zero(), from_addr=None, owners=None):
 
 
 def InvokeWithTokenVerificationScript(wallet, tx, token, fee=Fixed8.Zero(), invoke_attrs=None):
-
     wallet_tx = wallet.MakeTransaction(tx=tx, fee=fee, use_standard=True)
 
     if wallet_tx:
@@ -144,7 +150,6 @@ def InvokeWithTokenVerificationScript(wallet, tx, token, fee=Fixed8.Zero(), invo
 def TestInvokeContract(wallet, args, withdrawal_tx=None,
                        parse_params=True, from_addr=None,
                        min_fee=DEFAULT_MIN_FEE, invoke_attrs=None, owners=None):
-
     BC = GetBlockchain()
 
     contract = BC.GetContract(args[0])
@@ -201,7 +206,6 @@ def TestInvokeContract(wallet, args, withdrawal_tx=None,
         outputs = []
 
         if neo_to_attach:
-
             output = TransactionOutput(AssetId=Blockchain.SystemShare().Hash,
                                        Value=neo_to_attach,
                                        script_hash=contract.Code.ScriptHash(),
@@ -209,7 +213,6 @@ def TestInvokeContract(wallet, args, withdrawal_tx=None,
             outputs.append(output)
 
         if gas_to_attach:
-
             output = TransactionOutput(AssetId=Blockchain.SystemCoin().Hash,
                                        Value=gas_to_attach,
                                        script_hash=contract.Code.ScriptHash())
@@ -225,10 +228,37 @@ def TestInvokeContract(wallet, args, withdrawal_tx=None,
     return None, None, None, None
 
 
+def make_unique_script_attr(attributes):
+    """
+    Filter out duplicate `Script` TransactionAttributeUsage types.
+    Args:
+        attributes: a list of TransactionAttribute's
+
+    Returns:
+        list:
+    """
+    filtered_attr = []
+    script_list = []
+    for attr in attributes:
+        if attr.Usage != TransactionAttributeUsage.Script:
+            filtered_attr.append(attr)
+        else:
+            data = attr.Data
+            if isinstance(data, UInt160):
+                # convert it to equal type
+                data = attr.Data.ToArray()
+
+            # only add if it's not already in the list
+            if data not in script_list:
+                script_list.append(data)
+                filtered_attr.append(attr)
+
+    return filtered_attr
+
+
 def test_invoke(script, wallet, outputs, withdrawal_tx=None,
                 from_addr=None, min_fee=DEFAULT_MIN_FEE,
                 invoke_attrs=None, owners=None):
-
     # print("invoke script %s " % script)
 
     if from_addr is not None:
@@ -236,13 +266,11 @@ def test_invoke(script, wallet, outputs, withdrawal_tx=None,
 
     bc = GetBlockchain()
 
-    sn = bc._db.snapshot()
-
-    accounts = DBCollection(bc._db, sn, DBPrefix.ST_Account, AccountState)
-    assets = DBCollection(bc._db, sn, DBPrefix.ST_Asset, AssetState)
-    validators = DBCollection(bc._db, sn, DBPrefix.ST_Validator, ValidatorState)
-    contracts = DBCollection(bc._db, sn, DBPrefix.ST_Contract, ContractState)
-    storages = DBCollection(bc._db, sn, DBPrefix.ST_Storage, StorageItem)
+    accounts = DBCollection(bc._db, DBPrefix.ST_Account, AccountState)
+    assets = DBCollection(bc._db, DBPrefix.ST_Asset, AssetState)
+    validators = DBCollection(bc._db, DBPrefix.ST_Validator, ValidatorState)
+    contracts = DBCollection(bc._db, DBPrefix.ST_Contract, ContractState)
+    storages = DBCollection(bc._db, DBPrefix.ST_Storage, StorageItem)
 
     # if we are using a withdrawal tx, don't recreate the invocation tx
     # also, we don't want to reset the inputs / outputs
@@ -258,7 +286,7 @@ def test_invoke(script, wallet, outputs, withdrawal_tx=None,
     tx.Version = 1
     tx.scripts = []
     tx.Script = binascii.unhexlify(script)
-    tx.Attributes = [] if invoke_attrs is None else invoke_attrs
+    tx.Attributes = [] if invoke_attrs is None else deepcopy(invoke_attrs)
 
     script_table = CachedScriptTable(contracts)
     service = StateMachine(accounts, validators, assets, contracts, storages, None)
@@ -266,6 +294,7 @@ def test_invoke(script, wallet, outputs, withdrawal_tx=None,
     if len(outputs) < 1:
         contract = wallet.GetDefaultContract()
         tx.Attributes.append(TransactionAttribute(usage=TransactionAttributeUsage.Script, data=contract.ScriptHash))
+        tx.Attributes = make_unique_script_attr(tx.Attributes)
 
     # same as above. we don't want to re-make the transaction if it is a withdrawal tx
     if withdrawal_tx is not None:
@@ -282,14 +311,15 @@ def test_invoke(script, wallet, outputs, withdrawal_tx=None,
             #            print("contract %s %s" % (wallet.GetDefaultContract().ScriptHash, owner))
             if wallet.GetDefaultContract().ScriptHash != owner:
                 wallet_tx.Attributes.append(TransactionAttribute(usage=TransactionAttributeUsage.Script, data=owner))
+                wallet_tx.Attributes = make_unique_script_attr(tx.Attributes)
         context = ContractParametersContext(wallet_tx, isMultiSig=True)
 
     if context.Completed:
         wallet_tx.scripts = context.GetScripts()
     else:
         logger.warn("Not gathering signatures for test build.  For a non-test invoke that would occur here.")
-#        if not gather_signatures(context, wallet_tx, owners):
-#            return None, [], 0, None
+    #        if not gather_signatures(context, wallet_tx, owners):
+    #            return None, [], 0, None
 
     engine = ApplicationEngine(
         trigger_type=TriggerType.Application,
@@ -300,7 +330,7 @@ def test_invoke(script, wallet, outputs, withdrawal_tx=None,
         testMode=True
     )
 
-    engine.LoadScript(wallet_tx.Script, False)
+    engine.LoadScript(wallet_tx.Script)
 
     try:
         success = engine.Execute()
@@ -336,14 +366,14 @@ def test_invoke(script, wallet, outputs, withdrawal_tx=None,
             wallet_tx.Gas = tx_gas
             # reset the wallet outputs
             wallet_tx.outputs = outputs
-            wallet_tx.Attributes = [] if invoke_attrs is None else invoke_attrs
+            wallet_tx.Attributes = [] if invoke_attrs is None else deepcopy(invoke_attrs)
 
-            return wallet_tx, net_fee, engine.EvaluationStack.Items, engine.ops_processed
+            return wallet_tx, net_fee, engine.ResultStack.Items, engine.ops_processed
 
         # this allows you to to test invocations that fail
         else:
             wallet_tx.outputs = outputs
-            wallet_tx.Attributes = [] if invoke_attrs is None else invoke_attrs
+            wallet_tx.Attributes = [] if invoke_attrs is None else deepcopy(invoke_attrs)
             return wallet_tx, min_fee, [], engine.ops_processed
 
     except Exception as e:
@@ -355,21 +385,17 @@ def test_invoke(script, wallet, outputs, withdrawal_tx=None,
 def test_deploy_and_invoke(deploy_script, invoke_args, wallet,
                            from_addr=None, min_fee=DEFAULT_MIN_FEE, invocation_test_mode=True,
                            debug_map=None, invoke_attrs=None, owners=None):
-
     bc = GetBlockchain()
 
-    sn = bc._db.snapshot()
-
-    accounts = DBCollection(bc._db, sn, DBPrefix.ST_Account, AccountState)
-    assets = DBCollection(bc._db, sn, DBPrefix.ST_Asset, AssetState)
-    validators = DBCollection(bc._db, sn, DBPrefix.ST_Validator, ValidatorState)
-    contracts = DBCollection(bc._db, sn, DBPrefix.ST_Contract, ContractState)
-    storages = DBCollection(bc._db, sn, DBPrefix.ST_Storage, StorageItem)
+    accounts = DBCollection(bc._db, DBPrefix.ST_Account, AccountState)
+    assets = DBCollection(bc._db, DBPrefix.ST_Asset, AssetState)
+    validators = DBCollection(bc._db, DBPrefix.ST_Validator, ValidatorState)
+    contracts = DBCollection(bc._db, DBPrefix.ST_Contract, ContractState)
+    storages = DBCollection(bc._db, DBPrefix.ST_Storage, StorageItem)
 
     if settings.USE_DEBUG_STORAGE:
         debug_storage = DebugStorage.instance()
-        debug_sn = debug_storage.db.snapshot()
-        storages = DBCollection(debug_storage.db, debug_sn, DBPrefix.ST_Storage, StorageItem)
+        storages = DBCollection(debug_storage.db, DBPrefix.ST_Storage, StorageItem)
         storages.DebugStorage = True
 
     dtx = InvocationTransaction()
@@ -392,6 +418,7 @@ def test_deploy_and_invoke(deploy_script, invoke_args, wallet,
 
     contract = wallet.GetDefaultContract()
     dtx.Attributes = [TransactionAttribute(usage=TransactionAttributeUsage.Script, data=Crypto.ToScriptHash(contract.Script, unhex=False))]
+    dtx.Attributes = make_unique_script_attr(dtx.Attributes)
 
     to_dispatch = []
 
@@ -404,7 +431,7 @@ def test_deploy_and_invoke(deploy_script, invoke_args, wallet,
         testMode=True
     )
 
-    engine.LoadScript(dtx.Script, False)
+    engine.LoadScript(dtx.Script)
 
     # first we will execute the test deploy
     # then right after, we execute the test invoke
@@ -413,7 +440,7 @@ def test_deploy_and_invoke(deploy_script, invoke_args, wallet,
 
     if d_success:
 
-        items = engine.EvaluationStack.Items
+        items = engine.ResultStack.Items
 
         contract_state = None
         for i in items:
@@ -491,13 +518,14 @@ def test_deploy_and_invoke(deploy_script, invoke_args, wallet,
         itx.outputs = outputs
         itx.inputs = []
         itx.scripts = []
-        itx.Attributes = invoke_attrs if invoke_attrs else []
+        itx.Attributes = deepcopy(invoke_attrs) if invoke_attrs else []
         itx.Script = binascii.unhexlify(out)
 
         if len(outputs) < 1 and not owners:
             contract = wallet.GetDefaultContract()
             itx.Attributes.append(TransactionAttribute(usage=TransactionAttributeUsage.Script,
                                                        data=contract.ScriptHash))
+            itx.Attributes = make_unique_script_attr(itx.Attributes)
 
         itx = wallet.MakeTransaction(tx=itx, from_addr=from_addr)
 
@@ -508,16 +536,17 @@ def test_deploy_and_invoke(deploy_script, invoke_args, wallet,
             owners = list(owners)
             for owner in owners:
                 itx.Attributes.append(TransactionAttribute(usage=TransactionAttributeUsage.Script, data=owner))
+                itx.Attributes = make_unique_script_attr(itx.Attributes)
             context = ContractParametersContext(itx, isMultiSig=True)
 
         if context.Completed:
             itx.scripts = context.GetScripts()
         else:
             logger.warn("Not gathering signatures for test build.  For a non-test invoke that would occur here.")
-#            if not gather_signatures(context, itx, owners):
-#                return None, [], 0, None
+        #            if not gather_signatures(context, itx, owners):
+        #                return None, [], 0, None
 
-#        print("gathered signatures %s " % itx.scripts)
+        #        print("gathered signatures %s " % itx.scripts)
 
         engine = ApplicationEngine(
             trigger_type=TriggerType.Application,
@@ -529,7 +558,7 @@ def test_deploy_and_invoke(deploy_script, invoke_args, wallet,
         )
 
         engine.invocation_args = invoke_args
-        engine.LoadScript(itx.Script, False)
+        engine.LoadScript(itx.Script)
         engine.LoadDebugInfoForScriptHash(debug_map, shash.Data)
 
         i_success = engine.Execute()
@@ -560,7 +589,7 @@ def test_deploy_and_invoke(deploy_script, invoke_args, wallet,
             # set the amount of gas the tx will need
             itx.Gas = consumed
             itx.Attributes = []
-            result = engine.EvaluationStack.Items
+            result = engine.ResultStack.Items
             return itx, result, total_ops, engine
         else:
             print("error executing invoke contract...")
@@ -575,9 +604,8 @@ def test_deploy_and_invoke(deploy_script, invoke_args, wallet,
 
 def gather_signatures(context, itx, owners):
     do_exit = False
-    print("owners %s " % owners)
     print("\n\n*******************\n")
-    print("Gather Signatures for Transactino:\n%s " % json.dumps(itx.ToJson(), indent=4))
+    print("Gather Signatures for Transaction:\n%s " % json.dumps(itx.ToJson(), indent=4))
     print("Please use a client to sign the following: %s " % itx.GetHashData())
 
     owner_index = 0

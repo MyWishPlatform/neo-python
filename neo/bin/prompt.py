@@ -6,14 +6,9 @@ import json
 import os
 import psutil
 import traceback
-import logging
-import sys
-from time import sleep
-from logzero import logger
 from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.shortcuts import print_formatted_text, PromptSession
-from prompt_toolkit import prompt
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.styles import Style
 from prompt_toolkit import prompt
@@ -21,7 +16,7 @@ from twisted.internet import reactor, task
 
 from neo import __version__
 from neo.Core.Blockchain import Blockchain
-from neo.SmartContract.ContractParameter import ContractParameter, ContractParameterType
+from neo.SmartContract.ContractParameter import ContractParameter
 from neocore.Fixed8 import Fixed8
 from neo.IO.MemoryStream import StreamManager
 from neo.Wallets.utils import to_aes_key
@@ -29,18 +24,17 @@ from neo.Implementations.Blockchains.LevelDB.LevelDBBlockchain import LevelDBBlo
 from neo.Implementations.Blockchains.LevelDB.DebugStorage import DebugStorage
 from neo.Implementations.Wallets.peewee.UserWallet import UserWallet
 from neo.Implementations.Notifications.LevelDB.NotificationDB import NotificationDB
-from neo.Network.NodeLeader import NodeLeader
+from neo.Network.NodeLeader import NodeLeader, NeoClientFactory
+from neo.Prompt.Commands.config import start_output_config
 from neo.Prompt.Commands.BuildNRun import BuildAndRun, LoadAndRun
 from neo.Prompt.Commands.Invoke import InvokeContract, TestInvokeContract, test_invoke
 from neo.Prompt.Commands.LoadSmartContract import LoadContract, GatherContractDetails, ImportContractAddr, \
     ImportMultiSigContractAddr
-from neo.Prompt.Commands.Send import construct_and_send, parse_and_sign
-from neo.contrib.nex.withdraw import RequestWithdrawFrom, PrintHolds, DeleteHolds, WithdrawOne, WithdrawAll, \
-    CancelWithdrawalHolds, ShowCompletedHolds, CleanupCompletedHolds
+from neo.Prompt.Commands.Send import construct_send_basic, construct_send_many, process_transaction, parse_and_sign
 
 from neo.Prompt.Commands.Tokens import token_approve_allowance, token_get_allowance, token_send, token_send_from, \
     token_mint, token_crowdsale_register, token_history
-from neo.Prompt.Commands.Wallet import DeleteAddress, ImportWatchAddr, ImportToken, ClaimGas, DeleteToken, AddAlias, \
+from neo.Prompt.Commands.Wallet import CreateAddress, DeleteAddress, ImportWatchAddr, ImportToken, ClaimGas, DeleteToken, AddAlias, \
     ShowUnspentCoins, SplitUnspentCoin
 
 from neo.Prompt.Utils import get_arg, get_from_addr, get_tx_attr_from_args, get_owners_from_params
@@ -49,6 +43,9 @@ from neo.Settings import settings, PrivnetConnectionError
 from neo.UserPreferences import preferences
 from neocore.KeyPair import KeyPair
 from neocore.UInt256 import UInt256
+from neo.logging import log_manager
+
+logger = log_manager.getLogger()
 
 
 class PromptFileHistory(FileHistory):
@@ -89,7 +86,7 @@ class PromptInterface:
 
     go_on = True
 
-    _walletdb_loop = None
+    wallet_loop_deferred = None
 
     Wallet = None
 
@@ -100,24 +97,26 @@ class PromptInterface:
                 'block {index/hash} (tx)',
                 'header {index/hash}',
                 'tx {hash}',
-                'asset {assetId}',
+                'account {address} # returns account state',
+                'asset {assetId} # returns asset state',
                 'asset search {query}',
-                'contract {contract hash}',
+                'contract {contract hash} # returns contract state',
                 'contract search {query}',
                 'notifications {block_number or address}',
-                'mem',
-                'nodes',
+                'mem # returns memory in use and number of buffers',
+                'nodes # returns connected peers',
                 'state',
-                'config debug {on/off}',
+                'config output_levels (interactive)',
                 'config sc-events {on/off}',
                 'config maxpeers {num_peers}',
                 'config node-requests {reqsize} {queuesize}',
                 'config node-requests {slow/normal/fast}',
-                'build {path/to/file.py} (test {params} {returntype} {needs_storage} {needs_dynamic_invoke} [{test_params} or --i]) --no-parse-addr (parse address strings to script hash bytearray)',
-                'load_run {path/to/file.avm} (test {params} {returntype} {needs_storage} {needs_dynamic_invoke} [{test_params} or --i]) --no-parse-addr (parse address strings to script hash bytearray)',
+                'config compiler-nep8 {on/off}',
+                'build {path/to/file.py} (test {params} {returntype} {needs_storage} {needs_dynamic_invoke} {is_payable} [{test_params} or --i]) --no-parse-addr (parse address strings to script hash bytearray)',
+                'load_run {path/to/file.avm} (test {params} {returntype} {needs_storage} {needs_dynamic_invoke} {is_payable} [{test_params} or --i]) --no-parse-addr (parse address strings to script hash bytearray)',
                 'import wif {wif}',
                 'import nep2 {nep2_encrypted_key}',
-                'import contract {path/to/file.avm} {params} {returntype} {needs_storage} {needs_dynamic_invoke}',
+                'import contract {path/to/file.avm} {params} {returntype} {needs_storage} {needs_dynamic_invoke} {is_payable}',
                 'import contract_addr {contract_hash} {pubkey}',
                 'import multisig_addr {pubkey in wallet} {minimum # of signatures required} {signing pubkey 1} {signing pubkey 2}...',
                 'import watch_addr {address}',
@@ -126,14 +125,15 @@ class PromptInterface:
                 'export nep2 {address}',
                 'open wallet {path}',
                 'create wallet {path}',
-                'wallet {verbose}',
+                'wallet (verbose)',
                 'wallet claim (max_coins_to_claim)',
                 'wallet migrate',
-                'wallet rebuild {start block}',
+                'wallet rebuild (start block)',
+                'wallet create_addr {number of addresses}',
                 'wallet delete_addr {addr}',
                 'wallet delete_token {token_contract_hash}',
                 'wallet alias {addr} {title}',
-                'wallet tkn_send {token symbol} {address_from} {address to} {amount} ',
+                'wallet tkn_send {token symbol} {address_from} {address to} {amount}',
                 'wallet tkn_send_from {token symbol} {address_from} {address to} {amount}',
                 'wallet tkn_approve {token symbol} {address_from} {address to} {amount}',
                 'wallet tkn_allowance {token symbol} {address_from} {address to}',
@@ -141,16 +141,10 @@ class PromptInterface:
                 'wallet tkn_register {addr} ({addr}...) (--from-addr={addr})',
                 'wallet tkn_history {token symbol}',
                 'wallet unspent (neo/gas)',
-                'wallet split {addr} {asset} {unspent index} {divide into number of vins}'
+                'wallet split {addr} {asset} {unspent index} {divide into number of vins}',
                 'wallet close',
-                'withdraw_request {asset_name} {contract_hash} {to_addr} {amount}',
-                'withdraw holds # lists all current holds',
-                'withdraw completed # lists completed holds eligible for cleanup',
-                'withdraw cancel # cancels current holds',
-                'withdraw cleanup # cleans up completed holds',
-                'withdraw # withdraws the first hold availabe',
-                'withdraw all # withdraw all holds available',
-                'send {assetId or name} {address} {amount} (--from-addr={addr}) (--fee={priority_fee})',
+                'send {assetId or name} {address} {amount} (--from-addr={addr}) (--fee={priority_fee}) (--owners=[{addr}, ...]) (--tx-attr=[{"usage": <value>,"data":"<remark>"}, ...])',
+                'sendmany {number of outgoing tx} (--change-addr={addr}) (--from-addr={addr}) (--fee={priority_fee}) (--owners=[{addr}, ...]) (--tx-attr=[{"usage": <value>,"data":"<remark>"}, ...])',
                 'sign {transaction in JSON format}',
                 'testinvoke {contract hash} [{params} or --i] (--attach-neo={amount}, --attach-gas={amount}) (--from-addr={addr}) --no-parse-addr (parse address strings to script hash bytearray)',
                 'debugstorage {on/off/reset}'
@@ -178,11 +172,6 @@ class PromptInterface:
     def get_bottom_toolbar(self, cli=None):
         out = []
         try:
-            # Note: not sure if prompt-toolkit still supports foreground colors, couldn't get it to work
-            # out = [("class:command", '[%s] Progress: ' % settings.net_name),
-            #        ("class:number", str(Blockchain.Default().Height + 1)),
-            #        ("class:neo", '/'),
-            #        ("class:number", str(Blockchain.Default().HeaderHeight + 1))]
             return "[%s] Progress: %s/%s" % (settings.net_name,
                                              str(Blockchain.Default().Height + 1),
                                              str(Blockchain.Default().HeaderHeight + 1))
@@ -194,12 +183,17 @@ class PromptInterface:
     def get_completer(self):
 
         standard_completions = ['block', 'tx', 'header', 'mem', 'neo', 'gas',
-                                'help', 'state', 'nodes', 'exit', 'quit',
-                                'config', 'import', 'export', 'open',
-                                'wallet', 'contract', 'asset', 'wif',
+                                'help', 'state', 'nodes', 'exit', 'quit', 'node-requests',
+                                'config', 'import', 'export', 'open', 'maxpeers', 'sc-events',
+                                'wallet', 'contract', 'asset', 'account', 'wif', 'debug',
                                 'watch_addr', 'contract_addr', 'testinvoke', 'tkn_send',
                                 'tkn_mint', 'tkn_send_from', 'tkn_approve', 'tkn_allowance',
-                                'tkn_register', 'build', 'notifications', 'tkn_history']
+                                'tkn_register', 'build', 'notifications', 'tkn_history',
+                                'sign', 'send', 'sendmany', 'withdraw', 'nep2', 'multisig_addr', 'token',
+                                'claim', 'migrate', 'rebuild', 'create_addr', 'delete_addr',
+                                'delete_token', 'alias', 'unspent', 'split', 'close',
+                                'withdraw_reqest', 'completed', 'cancel', 'cleanup',
+                                'all', 'debugstorage', 'compiler-nep8', ]
 
         if self.Wallet:
             for addr in self.Wallet.Addresses:
@@ -308,12 +302,15 @@ class PromptInterface:
                 print("Please specify a path")
 
     def start_wallet_loop(self):
-        self._walletdb_loop = task.LoopingCall(self.Wallet.ProcessBlocks)
-        self._walletdb_loop.start(1)
+        if self.wallet_loop_deferred:
+            self.stop_wallet_loop()
+        walletdb_loop = task.LoopingCall(self.Wallet.ProcessBlocks)
+        self.wallet_loop_deferred = walletdb_loop.start(1)
+        self.wallet_loop_deferred.addErrback(self.on_looperror)
 
     def stop_wallet_loop(self):
-        self._walletdb_loop.stop()
-        self._walletdb_loop = None
+        self.wallet_loop_deferred.cancel()
+        self.wallet_loop_deferred = None
 
     def do_close_wallet(self):
         if self.Wallet:
@@ -454,45 +451,6 @@ class PromptInterface:
 
         print("Command export %s not found" % item)
 
-    def make_withdraw_request(self, arguments):
-        if not self.Wallet:
-            print("Please open a wallet")
-            return
-        if len(arguments) == 4:
-            RequestWithdrawFrom(self.Wallet, arguments[0], arguments[1], arguments[2], arguments[3])
-        else:
-            print("Incorrect arg length. Use 'withdraw_request {asset_id} {contract_hash} {to_addr} {amount}'")
-
-    def do_withdraw(self, arguments):
-        if not self.Wallet:
-            print("Please open a wallet")
-            return
-
-        item = get_arg(arguments, 0)
-
-        if item:
-
-            if item == 'holds':
-                PrintHolds(self.Wallet)
-            elif item == 'delete_holds':
-                index_to_delete = -1
-                if get_arg(arguments, 1) and int(get_arg(arguments, 1)) > -1:
-                    index_to_delete = int(get_arg(arguments, 1))
-                DeleteHolds(self.Wallet, index_to_delete)
-            elif item == 'cancel_holds':
-                if len(arguments) > 1:
-                    CancelWithdrawalHolds(self.Wallet, get_arg(arguments, 1))
-                else:
-                    print("Please specify contract hash to cancel holds for")
-            elif item == 'completed':
-                ShowCompletedHolds(self.Wallet)
-            elif item == 'cleanup':
-                CleanupCompletedHolds(self.Wallet)
-            elif item == 'all':
-                WithdrawAll(self.Wallet)
-        else:
-            WithdrawOne(self.Wallet)
-
     def do_notifications(self, arguments):
         if NotificationDB.instance() is None:
             print("No notification DB Configured")
@@ -537,9 +495,12 @@ class PromptInterface:
         elif item == 'migrate' and self.Wallet is not None:
             self.Wallet.Migrate()
             print("Migrated wallet")
+        elif item == 'create_addr':
+            addresses_to_create = get_arg(arguments, 1)
+            CreateAddress(self.Wallet, addresses_to_create)
         elif item == 'delete_addr':
             addr_to_delete = get_arg(arguments, 1)
-            DeleteAddress(self, self.Wallet, addr_to_delete)
+            DeleteAddress(self.Wallet, addr_to_delete)
         elif item == 'delete_token':
             token_to_delete = get_arg(arguments, 1)
             DeleteToken(self.Wallet, token_to_delete)
@@ -588,11 +549,18 @@ class PromptInterface:
             print("Wallet: '{}' is an invalid parameter".format(item))
 
     def do_send(self, arguments):
-        construct_and_send(self, self.Wallet, arguments)
+        framework = construct_send_basic(self.Wallet, arguments)
+        if type(framework) is list:
+            process_transaction(self.Wallet, contract_tx=framework[0], scripthash_from=framework[1], fee=framework[2], owners=framework[3], user_tx_attributes=framework[4])
+
+    def do_send_many(self, arguments):
+        framework = construct_send_many(self.Wallet, arguments)
+        if type(framework) is list:
+            process_transaction(self.Wallet, contract_tx=framework[0], scripthash_from=framework[1], scripthash_change=framework[2], fee=framework[3], owners=framework[4], user_tx_attributes=framework[5])
 
     def do_sign(self, arguments):
         jsn = get_arg(arguments)
-        parse_and_sign(self, self.Wallet, jsn)
+        parse_and_sign(self.Wallet, jsn)
 
     def show_state(self):
         height = Blockchain.Default().Height
@@ -636,7 +604,7 @@ class PromptInterface:
             block = Blockchain.Default().GetBlock(item)
 
             if block is not None:
-
+                block.LoadTransactions()
                 bjson = json.dumps(block.ToJson(), indent=4)
                 tokens = [("class:number", bjson)]
                 print_formatted_text(FormattedText(tokens), style=self.token_style)
@@ -866,70 +834,99 @@ class PromptInterface:
     def configure(self, args):
         what = get_arg(args)
 
-        if what == 'debug':
-            c1 = get_arg(args, 1).lower()
-            if c1 is not None:
-                if c1 == 'on' or c1 == '1':
-                    print("Debug logging is now enabled")
-                    settings.set_loglevel(logging.DEBUG)
-                if c1 == 'off' or c1 == '0':
-                    print("Debug logging is now disabled")
-                    settings.set_loglevel(logging.INFO)
-
-            else:
-                print("Cannot configure log. Please specify on|off")
-
+        if what == 'output_levels':
+            start_output_config()
         elif what == 'sc-events':
-            c1 = get_arg(args, 1).lower()
+            c1 = get_arg(args, 1)
             if c1 is not None:
+                c1 = c1.lower()
                 if c1 == 'on' or c1 == '1':
                     print("Smart contract event logging is now enabled")
                     settings.set_log_smart_contract_events(True)
-                if c1 == 'off' or c1 == '0':
+                elif c1 == 'off' or c1 == '0':
                     print("Smart contract event logging is now disabled")
                     settings.set_log_smart_contract_events(False)
+                else:
+                    print("Cannot configure log. Please specify on|off")
 
             else:
                 print("Cannot configure log. Please specify on|off")
 
         elif what == 'sc-debug-notify':
-            c1 = get_arg(args, 1).lower()
+            c1 = get_arg(args, 1)
             if c1 is not None:
+                c1 = c1.lower()
                 if c1 == 'on' or c1 == '1':
                     print("Smart contract emit Notify events on execution failure is now enabled")
                     settings.set_emit_notify_events_on_sc_execution_error(True)
-                if c1 == 'off' or c1 == '0':
+                elif c1 == 'off' or c1 == '0':
                     print("Smart contract emit Notify events on execution failure is now disabled")
                     settings.set_emit_notify_events_on_sc_execution_error(False)
+                else:
+                    print("Cannot configure log. Please specify on|off")
 
             else:
                 print("Cannot configure log. Please specify on|off")
 
         elif what == 'vm-log':
-            c1 = get_arg(args, 1).lower()
+            c1 = get_arg(args, 1)
             if c1 is not None:
+                c1 = c1.lower()
                 if c1 == 'on' or c1 == '1':
                     print("VM instruction execution logging is now enabled")
                     settings.set_log_vm_instruction(True)
-                if c1 == 'off' or c1 == '0':
+                elif c1 == 'off' or c1 == '0':
                     print("VM instruction execution logging is now disabled")
                     settings.set_log_vm_instruction(False)
+                else:
+                    print("Cannot configure VM instruction logging. Please specify on|off")
 
             else:
                 print("Cannot configure VM instruction logging. Please specify on|off")
 
         elif what == 'node-requests':
-            if len(args) == 3:
-                NodeLeader.Instance().setBlockReqSizeAndMax(int(args[1]), int(args[2]))
-            elif len(args) == 2:
-                NodeLeader.Instance().setBlockReqSizeByName(args[1])
+            if len(args) in [2, 3]:
+                if len(args) == 3:
+                    NodeLeader.Instance().setBlockReqSizeAndMax(int(args[1]), int(args[2]))
+                elif len(args) == 2:
+                    NodeLeader.Instance().setBlockReqSizeByName(args[1])
+            else:
+                print("Invalid number of arguments")
+
+        elif what == 'maxpeers':
+            c1 = get_arg(args, 1)
+            if c1 is not None:
+                print("Maxpeers set to ", c1)
+                settings.set_max_peers(c1)
+
+            else:
+                print("Maintaining current number of maxpeers")
+        elif what == 'compiler-nep8':
+            c1 = get_arg(args, 1)
+            if c1 is not None:
+                c1 = c1.lower()
+                if c1 == 'on' or c1 == '1':
+                    print("Compiler NEP8 instructions on")
+                    settings.COMPILER_NEP_8 = True
+                elif c1 == 'off' or c1 == '0':
+                    print("Compiler NEP8 instructions off")
+                    settings.COMPILER_NEP_8 = False
+                else:
+                    print("Cannot configure compiler NEP8 instructions. Please specify on|off")
+            else:
+                print("Cannot configure compiler NEP8 instructions. Please specify on|off")
+
         else:
             print(
-                "Cannot configure %s try 'config sc-events on|off', 'config debug on|off', 'config sc-debug-notify on|off' or 'config vm-log on|off'" % what)
+                "Cannot configure %s try 'config sc-events on|off', 'config output_levels', 'config sc-debug-notify on|off', 'config vm-log on|off', config compiler-nep8 on|off, or 'config maxpeers {num_peers}'" % what)
+
+    def on_looperror(self, err):
+        logger.debug("On DB loop error! %s " % err)
 
     def run(self):
         dbloop = task.LoopingCall(Blockchain.Default().PersistBlocks)
-        dbloop.start(.1)
+        dbloop_deferred = dbloop.start(.1)
+        dbloop_deferred.addErrback(self.on_looperror)
 
         tokens = [("class:neo", 'NEO'), ("class:default", ' cli. Type '),
                   ("class:command", '\'help\' '), ("class:default", 'to get started')]
@@ -955,6 +952,8 @@ class PromptInterface:
             except KeyboardInterrupt:
                 # Control-C pressed: do nothing
                 continue
+            except Exception as e:
+                logger.error("Exception handling input: %s " % e)
 
             try:
                 command, arguments = self.input_parser.parse_input(result)
@@ -982,6 +981,8 @@ class PromptInterface:
                         self.show_wallet(arguments)
                     elif command == 'send':
                         self.do_send(arguments)
+                    elif command == 'sendmany':
+                        self.do_send_many(arguments)
                     elif command == 'sign':
                         self.do_sign(arguments)
                     elif command == 'block':
@@ -1042,6 +1043,8 @@ def main():
                        help="Use a private net instead of the default TestNet, optionally using a custom host (default: 127.0.0.1)")
     group.add_argument("--coznet", action="store_true", default=False,
                        help="Use the CoZ network instead of the default TestNet")
+    group.add_argument("-u", "--unittest", nargs="?", metavar="host", const=True, default=False,
+                       help="Use a private net instead of the default TestNet, optionally using a custom host (default: 127.0.0.1)")
     group.add_argument("-c", "--config", action="store", help="Use a specific config file")
 
     # Theme
@@ -1084,6 +1087,8 @@ def main():
             return
     elif args.coznet:
         settings.setup_coznet()
+    elif args.unittest:
+        settings.setup_unittest_net()
 
     # Logfile settings & setup
     logfile_fn = os.path.join(settings.DATA_DIR_PATH, 'prompt.log')
@@ -1113,8 +1118,9 @@ def main():
     cli = PromptInterface(fn_prompt_history)
 
     # Run things
-    #    reactor.suggestThreadPoolSize(15)
+
     reactor.callInThread(cli.run)
+
     NodeLeader.Instance().Start()
 
     # reactor.run() is blocking, until `quit()` is called which stops the reactor.
