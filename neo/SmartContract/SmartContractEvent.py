@@ -149,13 +149,17 @@ class SmartContractEvent(SerializableMixin):
             self.token = self.contract._nep_token
 
     def MWToJson(self):
+        try:
+            payload = [binascii.hexlify(x.Value).decode() if isinstance(x.Value,(bytes,bytearray)) else str(x.Value) for x in self.event_payload.Value]
+        except:
+            payload = ['cannot decode payload']
         jsn = {
             'type': self.event_type,
             'notify_type': self.Type,
             'contract': self.contract_hash.To0xString(),
             'block': self.block_number,
             'tx': self.tx_hash.To0xString(),
-            'payload': [binascii.hexlify(x).decode() if isinstance(x,bytes) else binascii.hexlify(str(x).encode()).decode() for x in self.event_payload],
+            'payload': payload,
             'is_success': self.execution_success,
 
         }
