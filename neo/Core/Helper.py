@@ -1,5 +1,4 @@
 from base58 import b58decode
-from logzero import logger
 import binascii
 from neo.Blockchain import GetBlockchain, GetStateReader
 from neocore.Cryptography.Crypto import Crypto
@@ -12,6 +11,9 @@ from neocore.Fixed8 import Fixed8
 from neo.SmartContract import TriggerType
 from neo.Settings import settings
 from neo.EventHub import events
+from neo.logging import log_manager
+
+logger = log_manager.getLogger()
 
 
 class Helper:
@@ -69,7 +71,7 @@ class Helper:
             value (neo.IO.Mixins.SerializableMixin): object extending SerializableMixin.
 
         Returns:
-            bytes:
+            bytes: hex formatted bytes
         """
         ms = StreamManager.GetStream()
         writer = BinaryWriter(ms)
@@ -77,6 +79,27 @@ class Helper:
         value.Serialize(writer)
 
         retVal = ms.ToArray()
+        StreamManager.ReleaseStream(ms)
+
+        return retVal
+
+    @staticmethod
+    def ToStream(value):
+        """
+        Serialize the given `value` to a an array of bytes.
+
+        Args:
+            value (neo.IO.Mixins.SerializableMixin): object extending SerializableMixin.
+
+        Returns:
+            bytes: not hexlified
+        """
+        ms = StreamManager.GetStream()
+        writer = BinaryWriter(ms)
+
+        value.Serialize(writer)
+
+        retVal = ms.getvalue()
         StreamManager.ReleaseStream(ms)
 
         return retVal
@@ -149,7 +172,7 @@ class Helper:
         try:
             hashes = verifiable.GetScriptHashesForVerifying()
         except Exception as e:
-            logger.error("couldn't get script hashes %s " % e)
+            logger.debug("couldn't get script hashes %s " % e)
             return False
 
         if len(hashes) != len(verifiable.Scripts):
@@ -172,9 +195,9 @@ class Helper:
 
             state_reader = GetStateReader()
             engine = ApplicationEngine(TriggerType.Verification, verifiable, blockchain, state_reader, Fixed8.Zero())
-            engine.LoadScript(verification, False)
-            invoction = verifiable.Scripts[i].InvocationScript
-            engine.LoadScript(invoction, True)
+            engine.LoadScript(verification)
+            invocation = verifiable.Scripts[i].InvocationScript
+            engine.LoadScript(invocation)
 
             try:
                 success = engine.Execute()
@@ -182,7 +205,7 @@ class Helper:
             except Exception as e:
                 state_reader.ExecutionCompleted(engine, False, e)
 
-            if engine.EvaluationStack.Count != 1 or not engine.EvaluationStack.Pop().GetBoolean():
+            if engine.ResultStack.Count != 1 or not engine.ResultStack.Pop().GetBoolean():
                 Helper.EmitServiceEvents(state_reader)
                 return False
 

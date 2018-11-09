@@ -13,11 +13,38 @@ from prompt_toolkit import prompt
 import binascii
 import json
 import math
-from logzero import logger
+from neo.Implementations.Wallets.peewee.Models import Account
+
+from neo.logging import log_manager
+
+logger = log_manager.getLogger()
 
 
-def DeleteAddress(prompter, wallet, addr):
+def CreateAddress(wallet, args):
+    try:
+        int_args = int(args)
+    except (ValueError, TypeError) as error:  # for non integer args or Nonetype
+        print(error)
+        return False
 
+    if wallet is None:
+        print("Please open a wallet.")
+        return False
+
+    if int_args <= 0:
+        print('Enter a number greater than 0.')
+        return False
+
+    address_list = []
+    for i in range(int_args):
+        keys = wallet.CreateKey()
+        account = Account.get(PublicKeyHash=keys.PublicKeyHash.ToBytes())
+        address_list.append(account.contract_set[0].Address.ToString())
+    print("Created %s new addresses: " % int_args, address_list)
+    return wallet
+
+
+def DeleteAddress(wallet, addr):
     scripthash = wallet.ToScriptHash(addr)
 
     success, coins = wallet.DeleteAddress(scripthash)
@@ -32,7 +59,6 @@ def DeleteAddress(prompter, wallet, addr):
 
 
 def DeleteToken(wallet, contract_hash):
-
     hash = UInt160.ParseString(contract_hash)
 
     success = wallet.DeleteNEP5Token(hash)
@@ -47,7 +73,6 @@ def DeleteToken(wallet, contract_hash):
 
 
 def ImportWatchAddr(wallet, addr):
-
     if wallet is None:
         print("Please open a wallet")
         return False
@@ -74,7 +99,6 @@ def ImportWatchAddr(wallet, addr):
 
 
 def ImportToken(wallet, contract_hash):
-
     if wallet is None:
         print("please open a wallet")
         return False
@@ -109,7 +133,18 @@ def AddAlias(wallet, addr, title):
 
 
 def ClaimGas(wallet, require_password=True, args=None):
+    """
 
+    Args:
+        wallet:
+        require_password:
+        args:
+
+    Returns:
+        (claim transaction, relayed status)
+            if successful: (tx, True)
+            if unsuccessful: (None, False)
+    """
     if args:
         params, from_addr_str = get_from_addr(args)
     else:
@@ -121,17 +156,17 @@ def ClaimGas(wallet, require_password=True, args=None):
     unclaimed_count = len(unclaimed_coins)
     if unclaimed_count == 0:
         print("no claims to process")
-        return False
+        return None, False
 
     max_coins_per_claim = None
     if params:
         max_coins_per_claim = get_arg(params, 0, convert_to_int=True)
         if not max_coins_per_claim:
             print("max_coins_to_claim must be an integer")
-            return False
+            return None, False
         if max_coins_per_claim <= 0:
             print("max_coins_to_claim must be greater than zero")
-            return False
+            return None, False
     if max_coins_per_claim and unclaimed_count > max_coins_per_claim:
         unclaimed_coins = unclaimed_coins[:max_coins_per_claim]
 
@@ -141,7 +176,7 @@ def ClaimGas(wallet, require_password=True, args=None):
 
     if available_bonus == Fixed8.Zero():
         print("No gas to claim")
-        return False
+        return None, False
 
     claim_tx = ClaimTransaction()
     claim_tx.Claims = unclaimed_coin_refs
@@ -178,7 +213,7 @@ def ClaimGas(wallet, require_password=True, args=None):
 
         if not wallet.ValidatePassword(passwd):
             print("incorrect password")
-            return
+            return None, False
 
     if context.Completed:
 
@@ -204,10 +239,10 @@ def ClaimGas(wallet, require_password=True, args=None):
 
 
 def ShowUnspentCoins(wallet, args):
-
     addr = None
     asset_type = None
     watch_only = 0
+    do_count = False
     try:
         for item in args:
             if len(item) == 34:
@@ -216,6 +251,8 @@ def ShowUnspentCoins(wallet, args):
                 asset_type = get_asset_id(wallet, item)
             if item == '--watch':
                 watch_only = 64
+            elif item == '--count':
+                do_count = True
 
     except Exception as e:
         print("Invalid arguments specified")
@@ -224,6 +261,11 @@ def ShowUnspentCoins(wallet, args):
         unspents = wallet.FindUnspentCoinsByAsset(asset_type, from_addr=addr, watch_only_val=watch_only)
     else:
         unspents = wallet.FindUnspentCoins(from_addr=addr, watch_only_val=watch_only)
+
+    if do_count:
+        print('\n-----------------------------------------------')
+        print('Total Unspent: %s' % len(unspents))
+        return unspents
 
     for unspent in unspents:
         print('\n-----------------------------------------------')
@@ -243,11 +285,18 @@ def SplitUnspentCoin(wallet, args, prompt_passwd=True):
 
     :return: bool
     """
+
+    fee = Fixed8.Zero()
+
     try:
         addr = wallet.ToScriptHash(args[0])
         asset = get_asset_id(wallet, args[1])
         index = int(args[2])
         divisions = int(args[3])
+
+        if len(args) == 5:
+            fee = Fixed8.TryParse(args[4])
+
     except Exception as e:
         logger.info("Invalid arguments specified: %s " % e)
         return None
@@ -260,7 +309,14 @@ def SplitUnspentCoin(wallet, args, prompt_passwd=True):
 
     outputs = split_to_vouts(asset, addr, unspentItem.Output.Value, divisions)
 
+    # subtract a fee from the first vout
+    if outputs[0].Value > fee:
+        outputs[0].Value -= fee
+    else:
+        raise Exception("Fee could not be subtracted from outputs.")
+
     contract_tx = ContractTransaction(outputs=outputs, inputs=[unspentItem.Reference])
+
     ctx = ContractParametersContext(contract_tx)
     wallet.Sign(ctx)
 

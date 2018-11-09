@@ -9,12 +9,12 @@ from neo.Settings import settings
 
 class UserWalletTestCase(WalletFixtureTestCase):
 
-    wallet_1_script_hash = UInt160(data=b'S\xefB\xc8\xdf!^\xbeZ|z\xe8\x01\xcb\xc3\xac/\xacI)')
+    wallet_1_script_hash = UInt160(data=b'\x1c\xc9\xc0\\\xef\xff\xe6\xcd\xd7\xb1\x82\x81j\x91R\xec!\x8d.\xc0')
 
-    wallet_1_addr = 'APRgMZHZubii29UXF9uFa6sohrsYupNAvx'
+    wallet_1_addr = 'AJQ6FoaSXDFzA6wLnyZ1nFN7SGSN2oNTc3'
 
-    import_watch_addr = UInt160(data=b'\xaf\x12\xa8h{\x14\x94\x8b\xc4\xa0\x08\x12\x8aU\nci[\xc1\xa5')
-    watch_addr_str = 'AXjaFSP23Jkbe6Pk9pPGT6NBDs1HVdqaXK'
+    import_watch_addr = UInt160(data=b'\x08t/\\P5\xac-\x0b\x1c\xb4\x94tIyBu\x7f1*')
+    watch_addr_str = 'AGYaEi3W6ndHPUmW7T12FFfsbQ6DWymkEm'
     _wallet1 = None
 
     big_str = "b'abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab'"
@@ -34,7 +34,7 @@ class UserWalletTestCase(WalletFixtureTestCase):
 
         wallet = self.GetWallet1()
 
-        arguments = ["neo/SmartContract/tests/StorageTest.py", "test", "070705", "05", "True", "False", "put", "key1", "b'ab'", "--from-addr=" + self.wallet_1_addr]
+        arguments = ["neo/SmartContract/tests/StorageTest.py", "test", "070705", "05", "True", "False", "True", "put", "key1", "b'ab'", "--from-addr=" + self.wallet_1_addr]
 
         tx, result, total_ops, engine = BuildAndRun(arguments, wallet, False, min_fee=Fixed8.FromDecimal(.0004))
 
@@ -54,7 +54,7 @@ class UserWalletTestCase(WalletFixtureTestCase):
 
         wallet = self.GetWallet1()
 
-        arguments = ["neo/SmartContract/tests/StorageTest.py", "test", "070705", "05", "True", "False", "put_5", "key1", "b'abababababab'"]
+        arguments = ["neo/SmartContract/tests/StorageTest.py", "test", "070705", "05", "True", "False", "True", "put_5", "key1", "b'abababababab'"]
 
         tx, result, total_ops, engine = BuildAndRun(arguments, wallet, False)
 
@@ -74,7 +74,7 @@ class UserWalletTestCase(WalletFixtureTestCase):
         """
         wallet = self.GetWallet1()
 
-        arguments = ["neo/SmartContract/tests/StorageTest.py", "test", "070705", "05", "True", "False", "put_and_get", "key1", "b'abababababab'"]
+        arguments = ["neo/SmartContract/tests/StorageTest.py", "test", "070705", "05", "True", "False", "True", "put_and_get", "key1", "b'abababababab'"]
 
         tx, result, total_ops, engine = BuildAndRun(arguments, wallet, False)
 
@@ -94,7 +94,7 @@ class UserWalletTestCase(WalletFixtureTestCase):
         """
         wallet = self.GetWallet1()
 
-        arguments = ["neo/SmartContract/tests/StorageTest.py", "test", "070705", "05", "True", "False", "put_and_get", "key1", self.big_str]
+        arguments = ["neo/SmartContract/tests/StorageTest.py", "test", "070705", "05", "True", "False", "True", "put_and_get", "key1", self.big_str]
 
         tx, result, total_ops, engine = BuildAndRun(arguments, wallet, False)
 
@@ -122,7 +122,7 @@ class UserWalletTestCase(WalletFixtureTestCase):
         """
         wallet = self.GetWallet1()
 
-        arguments = ["neo/SmartContract/tests/StorageTest.py", "test", "070705", "05", "True", "False", "put_5", "key1", self.big_str]
+        arguments = ["neo/SmartContract/tests/StorageTest.py", "test", "070705", "05", "True", "False", "True", "put_5", "key1", self.big_str]
 
         tx, result, total_ops, engine = BuildAndRun(arguments, wallet, False)
 
@@ -139,7 +139,7 @@ class UserWalletTestCase(WalletFixtureTestCase):
         """
         wallet = self.GetWallet1()
 
-        arguments = ["neo/SmartContract/tests/StorageTest.py", "test", "070705", "05", "True", "False", "put_9", "key1", "b'ababababab'"]
+        arguments = ["neo/SmartContract/tests/StorageTest.py", "test", "070705", "05", "True", "False", "True", "put_9", "key1", "b'ababababab'"]
 
         tx, result, total_ops, engine = BuildAndRun(arguments, wallet, False)
 
